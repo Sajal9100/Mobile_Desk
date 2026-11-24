@@ -1,0 +1,13 @@
+{
+  "name": "mobiledesk-spike-signaling-server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "THROWAWAY Milestone 1 spike. No auth. Never deploy. Deleted after the M1 report.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "ws": "8.23.0"
+  }
+}
