@@ -1,0 +1,41 @@
+# MobileDesk - LOCAL DEVELOPMENT coturn config (Phase 0).
+#
+# Copy to turnserver.conf (gitignored) and replace the secret. Start with:
+#   docker compose --env-file .env -f infra/docker-compose.yml --profile turn up -d coturn
+#
+# This is NOT the production config. Production (Phase 5) uses infra/coturn/turnserver.conf.tmpl
+# with the secret injected from the secrets manager at boot, TLS on 5349, and the VPC range denied.
+#
+# Credentials use the TURN REST scheme (see Phase 5): the server derives short-lived credentials
+# from this shared secret, so there is no per-user password to store here.
+
+listening-port=3478
+realm=localhost
+use-auth-secret
+static-auth-secret=<LOCAL_DEV_TURN_SECRET>
+
+# Small relay range for local use (must match the ports published in docker-compose.yml).
+min-port=49152
+max-port=49200
+
+fingerprint
+no-cli
+no-multicast-peers
+no-tls
+no-dtls
+
+# Refuse to relay to private / internal networks. For a local test between two devices on the same
+# LAN you may need to remove the matching line (e.g. 192.168.0.0-192.168.255.255) in YOUR local
+# copy. Never do that in staging or production.
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+
+user-quota=4
+total-quota=20
+log-file=stdout
+simple-log

@@ -1,0 +1,135 @@
+# MobileDesk local stack.
+#
+#   docker compose --env-file .env -f infra/docker-compose.yml up -d --build
+#   docker compose --env-file .env -f infra/docker-compose.yml --profile turn up -d coturn
+#
+# Run both from the Server/ directory. `--env-file .env` is needed because Compose otherwise looks
+# for .env next to this file (infra/), not in Server/.
+#
+# Postgres and Redis are published on 127.0.0.1 ONLY. Passwords come from .env (never committed);
+# use URL-safe passwords (hex) because they are embedded in connection URLs.
+
+name: mobiledesk
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: Dockerfile
+    target: runtime
+  image: mobiledesk-server:local
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+  environment: &app-env
+    # The image sets NODE_ENV=production, which requires an https APP_PUBLIC_BASE_URL. Locally we
+    # run over plain http, so the stack runs as "development".
+    NODE_ENV: development
+    BIND_HOST: 0.0.0.0 # inside the container only; the published ports below are 127.0.0.1
+    PORT_API: ${PORT_API:-3000}
+    PORT_REALTIME: ${PORT_REALTIME:-3001}
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+    CORS_ORIGINS: ${CORS_ORIGINS:-}
+    APP_PUBLIC_BASE_URL: http://localhost:${PORT_API:-3000}
+    DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
+    REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    ports:
+      - '127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    # Auth required; no persistence (local development only).
+    command:
+      [
+        'redis-server',
+        '--requirepass',
+        '${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}',
+        '--save',
+        '',
+        '--appendonly',
+        'no',
+      ]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    ports:
+      - '127.0.0.1:${REDIS_HOST_PORT:-6379}:6379'
+    healthcheck:
+      test: ['CMD-SHELL', 'REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # One-shot: applies prisma/migrations, then exits. The API/realtime/worker wait for it.
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: build
+    image: mobiledesk-server-migrate:local
+    command: ['npx', 'prisma', 'migrate', 'deploy']
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    <<: *app
+    command: ['node', 'dist/main-api.js']
+    ports:
+      - '127.0.0.1:${PORT_API:-3000}:${PORT_API:-3000}'
+
+  realtime:
+    <<: *app
+    command: ['node', 'dist/main-realtime.js']
+    environment:
+      <<: *app-env
+      HEALTHCHECK_PORT: ${PORT_REALTIME:-3001}
+    ports:
+      - '127.0.0.1:${PORT_REALTIME:-3001}:${PORT_REALTIME:-3001}'
+
+  worker:
+    <<: *app
+    command: ['node', 'dist/main-worker.js']
+    # The worker has no HTTP listener yet (queues arrive in Phase 2).
+    healthcheck:
+      disable: true
+
+  # Not started by default: `--profile turn`. Copy coturn/turnserver.conf.example to
+  # coturn/turnserver.conf (gitignored) and set the secret first.
+  coturn:
+    image: coturn/coturn:latest # pinned to a version in Phase 5
+    profiles: ['turn']
+    restart: unless-stopped
+    command: ['-c', '/etc/coturn/turnserver.conf']
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    ports:
+      - '127.0.0.1:3478:3478/udp'
+      - '127.0.0.1:3478:3478/tcp'
+      - '127.0.0.1:49152-49200:49152-49200/udp'
+
+volumes:
+  pgdata:

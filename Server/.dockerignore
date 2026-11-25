@@ -1,0 +1,17 @@
+node_modules
+dist
+coverage
+.git
+.github
+
+# never bake secrets into an image
+.env
+.env.*
+
+# not needed at build or run time
+test
+docs
+infra
+contracts
+*.md
+.vscode

@@ -1,0 +1,336 @@
+asyncapi: 3.1.0
+
+info:
+  title: MobileDesk Realtime
+  version: 0.1.0-draft
+  description: |
+    **Draft contract, Phase 0.** Socket.IO events of the realtime process (`main-realtime.ts`).
+    Derived from the Phase 3, 4, 5 and 7 briefs and the app plan §12; to be reconciled against the
+    architecture doc.
+
+    AsyncAPI has no Socket.IO binding, so each channel's `address` is the Socket.IO **event name**.
+    Directions are from the **server's** point of view: `send` = server → client, `receive` =
+    client → server.
+
+    Handshake (Phase 3)
+    1. `POST /api/realtime/ticket` (REST, device-bound access token) → `{ ticket }`.
+    2. Connect with `transports: ['websocket']` and `auth: { ticket }`. The ticket is single use
+       and lives 30 s: fetch a new one for every (re)connect.
+    3. A bad, expired or reused ticket, or a revoked device or suspended user, fails the handshake
+       with a `connect_error` whose message is `unauthorized`.
+    4. Never put a token in the URL: handshakes with `token` or `access_token` query parameters
+       are rejected.
+
+    Rules
+    - The server authorises every inbound event from the authenticated identity and database
+      state; it never relays to a client-supplied device id.
+    - Unknown inbound events are ignored and counted (more than 20 per minute → disconnect).
+      Per-socket limit: 50 events per 10 s.
+    - Input events (`input:*`) never travel through this server; if one arrives it is dropped and
+      counted as a violation (Phase 7).
+
+    Every operation carries `x-status` (`planned` until its phase ships) and `x-phase`.
+
+servers:
+  production:
+    host: rt.mobiledesk.app
+    protocol: wss
+    description: Production (planned, Phase 6)
+    security:
+      - $ref: '#/components/securitySchemes/ticket'
+  local:
+    host: localhost:3001
+    protocol: ws
+    description: Local development
+    security:
+      - $ref: '#/components/securitySchemes/ticket'
+
+defaultContentType: application/json
+
+channels:
+  ping:
+    address: ping
+    messages:
+      ping: { $ref: '#/components/messages/ping' }
+  devicePresence:
+    address: 'device:presence'
+    messages:
+      devicePresence: { $ref: '#/components/messages/devicePresence' }
+  sessionIncoming:
+    address: 'session:incoming'
+    messages:
+      sessionIncoming: { $ref: '#/components/messages/sessionIncoming' }
+  sessionAccepted:
+    address: 'session:accepted'
+    messages:
+      sessionAccepted: { $ref: '#/components/messages/sessionAccepted' }
+  sessionRejected:
+    address: 'session:rejected'
+    messages:
+      sessionRejected: { $ref: '#/components/messages/sessionRejected' }
+  sessionCancelled:
+    address: 'session:cancelled'
+    messages:
+      sessionCancelled: { $ref: '#/components/messages/sessionCancelled' }
+  sessionExpired:
+    address: 'session:expired'
+    messages:
+      sessionExpired: { $ref: '#/components/messages/sessionExpired' }
+  sessionEnded:
+    address: 'session:ended'
+    messages:
+      sessionEnded: { $ref: '#/components/messages/sessionEnded' }
+  webrtcOffer:
+    address: 'webrtc:offer'
+    messages:
+      webrtcOffer: { $ref: '#/components/messages/webrtcOffer' }
+  webrtcAnswer:
+    address: 'webrtc:answer'
+    messages:
+      webrtcAnswer: { $ref: '#/components/messages/webrtcAnswer' }
+  webrtcIceCandidate:
+    address: 'webrtc:ice-candidate'
+    messages:
+      webrtcIceCandidate: { $ref: '#/components/messages/webrtcIceCandidate' }
+  webrtcConnected:
+    address: 'webrtc:connected'
+    messages:
+      webrtcConnected: { $ref: '#/components/messages/webrtcConnected' }
+  sessionControlRequested:
+    address: 'session:control-requested'
+    messages:
+      sessionControlRequested: { $ref: '#/components/messages/sessionControlRequested' }
+  sessionControlChanged:
+    address: 'session:control-changed'
+    messages:
+      sessionControlChanged: { $ref: '#/components/messages/sessionControlChanged' }
+
+operations:
+  receivePing:
+    action: receive
+    channel: { $ref: '#/channels/ping' }
+    summary: Heartbeat every 20 s; refreshes the device's presence TTL (60 s).
+    x-status: planned
+    x-phase: 3
+  sendDevicePresence:
+    action: send
+    channel: { $ref: '#/channels/devicePresence' }
+    summary: A device of the user went online or offline. Sent to room `user:{userId}`.
+    x-status: planned
+    x-phase: 3
+
+  sendSessionIncoming:
+    action: send
+    channel: { $ref: '#/channels/sessionIncoming' }
+    summary: A request arrived for this (target) device. Sent to room `device:{targetDeviceId}`.
+    x-status: planned
+    x-phase: 4
+  sendSessionAccepted:
+    action: send
+    channel: { $ref: '#/channels/sessionAccepted' }
+    summary: The target accepted. Sent to both devices, only by the session service after commit.
+    x-status: planned
+    x-phase: 4
+  sendSessionRejected:
+    action: send
+    channel: { $ref: '#/channels/sessionRejected' }
+    summary: The target rejected.
+    x-status: planned
+    x-phase: 4
+  sendSessionCancelled:
+    action: send
+    channel: { $ref: '#/channels/sessionCancelled' }
+    summary: The controller cancelled the pending request.
+    x-status: planned
+    x-phase: 4
+  sendSessionExpired:
+    action: send
+    channel: { $ref: '#/channels/sessionExpired' }
+    summary: The request expired (60 s) without an answer.
+    x-status: planned
+    x-phase: 4
+  sendSessionEnded:
+    action: send
+    channel: { $ref: '#/channels/sessionEnded' }
+    summary: The session ended or failed. Relaying stops immediately.
+    x-status: planned
+    x-phase: 4
+
+  receiveWebrtcOffer:
+    action: receive
+    channel: { $ref: '#/channels/webrtcOffer' }
+    summary: 'Target (screen sender) sends its offer. Limit 5 per session per minute; a controller offer is dropped.'
+    x-status: planned
+    x-phase: 5
+  sendWebrtcOffer:
+    action: send
+    channel: { $ref: '#/channels/webrtcOffer' }
+    summary: The relayed offer, delivered to the other party only.
+    x-status: planned
+    x-phase: 5
+  receiveWebrtcAnswer:
+    action: receive
+    channel: { $ref: '#/channels/webrtcAnswer' }
+    summary: 'Controller sends its answer. Limit 5 per session per minute; a target answer is dropped.'
+    x-status: planned
+    x-phase: 5
+  sendWebrtcAnswer:
+    action: send
+    channel: { $ref: '#/channels/webrtcAnswer' }
+    summary: The relayed answer, delivered to the other party only.
+    x-status: planned
+    x-phase: 5
+  receiveWebrtcIceCandidate:
+    action: receive
+    channel: { $ref: '#/channels/webrtcIceCandidate' }
+    summary: ICE candidate from either party. Limit 100 per session per minute.
+    x-status: planned
+    x-phase: 5
+  sendWebrtcIceCandidate:
+    action: send
+    channel: { $ref: '#/channels/webrtcIceCandidate' }
+    summary: The relayed candidate, delivered to the other party only.
+    x-status: planned
+    x-phase: 5
+  receiveWebrtcConnected:
+    action: receive
+    channel: { $ref: '#/channels/webrtcConnected' }
+    summary: Either party reports the peer connection is up; moves the session to `connected` (idempotent). Limit 2 per session.
+    x-status: planned
+    x-phase: 5
+
+  sendSessionControlRequested:
+    action: send
+    channel: { $ref: '#/channels/sessionControlRequested' }
+    summary: The controller asked the target for control (v2, behind FEATURE_REMOTE_CONTROL).
+    x-status: planned
+    x-phase: 7
+  sendSessionControlChanged:
+    action: send
+    channel: { $ref: '#/channels/sessionControlChanged' }
+    summary: Control was granted or revoked. Sent to both parties (v2).
+    x-status: planned
+    x-phase: 7
+
+components:
+  securitySchemes:
+    ticket:
+      type: apiKey
+      in: user
+      description: |
+        Single-use 30 s ticket from `POST /api/realtime/ticket`, sent in the Socket.IO handshake
+        `auth` payload as `{ ticket }`. Never in the URL.
+
+  messages:
+    ping:
+      name: ping
+      summary: Heartbeat. No payload.
+      payload: { $ref: '#/components/schemas/Empty' }
+    devicePresence:
+      name: device:presence
+      payload: { $ref: '#/components/schemas/DevicePresence' }
+    sessionIncoming:
+      name: session:incoming
+      payload: { $ref: '#/components/schemas/SessionEvent' }
+    sessionAccepted:
+      name: session:accepted
+      payload: { $ref: '#/components/schemas/SessionEvent' }
+    sessionRejected:
+      name: session:rejected
+      payload: { $ref: '#/components/schemas/SessionEvent' }
+    sessionCancelled:
+      name: session:cancelled
+      payload: { $ref: '#/components/schemas/SessionEvent' }
+    sessionExpired:
+      name: session:expired
+      payload: { $ref: '#/components/schemas/SessionEvent' }
+    sessionEnded:
+      name: session:ended
+      payload: { $ref: '#/components/schemas/SessionEvent' }
+    webrtcOffer:
+      name: webrtc:offer
+      payload: { $ref: '#/components/schemas/WebrtcOffer' }
+    webrtcAnswer:
+      name: webrtc:answer
+      payload: { $ref: '#/components/schemas/WebrtcAnswer' }
+    webrtcIceCandidate:
+      name: webrtc:ice-candidate
+      payload: { $ref: '#/components/schemas/WebrtcIceCandidate' }
+    webrtcConnected:
+      name: webrtc:connected
+      payload: { $ref: '#/components/schemas/SessionRef' }
+    sessionControlRequested:
+      name: session:control-requested
+      payload: { $ref: '#/components/schemas/SessionRef' }
+    sessionControlChanged:
+      name: session:control-changed
+      payload: { $ref: '#/components/schemas/SessionControlChanged' }
+
+  schemas:
+    Empty:
+      type: 'null'
+      description: No payload.
+    DevicePresence:
+      type: object
+      additionalProperties: false
+      required: [deviceId, online]
+      properties:
+        deviceId: { type: string, format: uuid }
+        online: { type: boolean }
+    SessionRef:
+      type: object
+      additionalProperties: false
+      required: [sessionId]
+      properties:
+        sessionId: { type: string, format: uuid }
+    SessionEvent:
+      type: object
+      description: Payload is only ids and status; never names, emails or SDP.
+      additionalProperties: false
+      required: [sessionId, status]
+      properties:
+        sessionId: { type: string, format: uuid }
+        status:
+          type: string
+          enum:
+            [waiting_for_approval, accepted, connected, rejected, expired, cancelled, ended, failed]
+        reason: { type: string, description: Optional end or failure reason. }
+    WebrtcOffer:
+      type: object
+      additionalProperties: false
+      required: [sessionId, sdp, type]
+      properties:
+        sessionId: { type: string, format: uuid }
+        sdp: { type: string, maxLength: 16384, description: Never logged. }
+        type: { type: string, const: offer }
+    WebrtcAnswer:
+      type: object
+      additionalProperties: false
+      required: [sessionId, sdp, type]
+      properties:
+        sessionId: { type: string, format: uuid }
+        sdp: { type: string, maxLength: 16384, description: Never logged. }
+        type: { type: string, const: answer }
+    WebrtcIceCandidate:
+      type: object
+      additionalProperties: false
+      required: [sessionId, candidate]
+      properties:
+        sessionId: { type: string, format: uuid }
+        candidate: { type: string, maxLength: 1024, description: Never logged. }
+        sdpMid:
+          type: [string, 'null']
+          maxLength: 64
+          description: 'PROPOSAL: null is accepted because react-native-webrtc emits null (the brief lists the field as optional, not nullable). Confirm in Phase 5.'
+        sdpMLineIndex:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 16
+          description: 'PROPOSAL: null is accepted, as for sdpMid.'
+    SessionControlChanged:
+      type: object
+      additionalProperties: false
+      required: [sessionId, granted]
+      properties:
+        sessionId: { type: string, format: uuid }
+        granted: { type: boolean }

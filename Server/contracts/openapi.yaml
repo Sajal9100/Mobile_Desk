@@ -1,0 +1,1236 @@
+openapi: 3.1.0
+
+info:
+  title: MobileDesk API
+  version: 0.1.0-draft
+  summary: REST API of the MobileDesk server (account, devices, sessions, WebRTC config).
+  description: |
+    **Draft contract, Phase 0.** Source of truth for the app team; the app generates its types from
+    this file (`openapi-typescript`). Server code follows this file, not the other way round.
+
+    Status markers on every operation:
+    - `x-status: implemented` — live in the server.
+    - `x-status: planned` — stub; `x-phase` says which server phase delivers it. Shapes may still
+      change until that phase's gate; the app team is notified then.
+
+    Derived from `Phase_0` … `Phase_7` briefs and the app plan §11–12. To be reconciled against
+    the "MobileDesk — Server Architecture & Build Plan" document once it is provided.
+
+    Conventions
+    - Every error is `{ "error": { "code", "message", "requestId" } }` (`Error` schema).
+    - `x-request-id` is accepted on requests (≤ 64 chars of `[A-Za-z0-9_-]`) and always echoed.
+    - Bodies are JSON, at most 64 KB, and unknown fields are rejected with `400 validation_failed`.
+    - Times are ISO-8601 UTC. IDs are UUIDs, except a device's 9–10 digit `publicId`.
+    - Never send tokens, tickets or PINs in a URL.
+
+servers:
+  - url: https://api.mobiledesk.app
+    description: Production (planned, Phase 6)
+  - url: http://localhost:3000
+    description: Local development
+
+tags:
+  - name: health
+    description: Liveness and readiness probes.
+  - name: auth
+    description: Registration, login, token refresh and logout (Phase 2).
+  - name: account
+    description: The signed-in user and account lifecycle.
+  - name: devices
+    description: Device registry, push tokens and PINs (Phases 3-4).
+  - name: realtime
+    description: Single-use tickets for the Socket.IO handshake (Phase 3).
+  - name: sessions
+    description: Request, consent, lifecycle and history of remote-view sessions (Phase 4; control in Phase 7).
+  - name: settings
+    description: Privacy settings and block list (Phase 4).
+  - name: webrtc
+    description: Short-lived ICE / TURN configuration (Phase 5).
+  - name: dev
+    description: Development-only helpers; absent in production.
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------- health (Phase 0)
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Liveness. The process is up.
+      security: []
+      x-status: implemented
+      x-phase: 0
+      responses:
+        '200':
+          description: Alive
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthStatus' }
+
+  /ready:
+    get:
+      tags: [health]
+      operationId: getReady
+      summary: Readiness. Postgres `SELECT 1` and Redis `PING`, each limited to 1 s.
+      security: []
+      x-status: implemented
+      x-phase: 0
+      responses:
+        '200':
+          description: Both dependencies answered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadyStatus' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # ---------------------------------------------------------------- auth (Phase 2)
+  /api/integrity/nonce:
+    get:
+      tags: [auth]
+      operationId: getIntegrityNonce
+      summary: One-time nonce for a Play Integrity request (5 min, single use).
+      description: Rate limit 30 per minute per IP.
+      security: []
+      x-status: planned
+      x-phase: 2
+      responses:
+        '200':
+          description: Nonce (32 random bytes, base64url)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IntegrityNonce' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: Create an account.
+      description: |
+        Requires a valid Play Integrity verdict. Limit 5 per hour per IP.
+        Planned error codes: `409 email_taken`, `503 integrity_unavailable`.
+      security: []
+      x-status: planned
+      x-phase: 2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: Account created and signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Sign in with email and password.
+      description: |
+        A wrong email and a wrong password return the identical `401 invalid_credentials`.
+        Limits: 10 per 15 min per email, 30 per 15 min per IP.
+      security: []
+      x-status: planned
+      x-phase: 2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshTokens
+      summary: Rotate the refresh token and get a new access token.
+      description: |
+        Reusing an already-rotated refresh token revokes the whole token family
+        (`401 refresh_reuse_detected`). Limit 30 per 15 min per family.
+      security: []
+      x-status: planned
+      x-phase: 2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: New token pair
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Revoke the refresh-token family of the presented token.
+      security: []
+      x-status: planned
+      x-phase: 2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '204': { description: Revoked }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/me:
+    get:
+      tags: [account]
+      operationId: getMe
+      summary: The signed-in user.
+      x-status: planned
+      x-phase: 2
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/account:
+    delete:
+      tags: [account]
+      operationId: deleteAccount
+      summary: Delete the account (soft delete now; hard delete after 30 days, Phase 6).
+      description: Revokes all refresh-token families and disconnects all sockets.
+      x-status: planned
+      x-phase: 2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeleteAccountRequest' }
+      responses:
+        '204': { description: Account deleted }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/account/export:
+    get:
+      tags: [account]
+      operationId: exportAccount
+      summary: The caller's own data as JSON (profile, devices, session history).
+      description: Limit 1 per day.
+      x-status: planned
+      x-phase: 6
+      responses:
+        '200':
+          description: Data export
+          content:
+            application/json:
+              schema:
+                type: object
+                description: 'TODO(server): final shape fixed in Phase 6.'
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  # ---------------------------------------------------------------- devices (Phase 3)
+  /api/devices/register:
+    post:
+      tags: [devices]
+      operationId: registerDevice
+      summary: Register this phone; returns a device-bound token pair.
+      description: |
+        Verifies integrity, creates the device with a server-assigned `publicId`, and rotates the
+        caller's refresh family into a new family bound to the device. At most 10 active devices
+        per user.
+      x-status: planned
+      x-phase: 3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterDeviceRequest' }
+      responses:
+        '201':
+          description: Device registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegisterDeviceResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/devices:
+    get:
+      tags: [devices]
+      operationId: listDevices
+      summary: The caller's non-revoked devices, with presence status.
+      x-status: planned
+      x-phase: 3
+      responses:
+        '200':
+          description: Devices
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: '#/components/schemas/Device' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/devices/{id}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    patch:
+      tags: [devices]
+      operationId: renameDevice
+      summary: Rename a device (owner only; 2–40 characters).
+      description: Another user's device returns `404 not_found`, never `403`.
+      x-status: planned
+      x-phase: 3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenameDeviceRequest' }
+      responses:
+        '200':
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [device]
+                properties:
+                  device: { $ref: '#/components/schemas/Device' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [devices]
+      operationId: removeDevice
+      summary: Remove a device (owner only).
+      description: |
+        Revokes the device, every refresh family bound to it, disconnects its sockets and clears its
+        push token. Removing the current device is a logout.
+      x-status: planned
+      x-phase: 3
+      responses:
+        '204': { description: Removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/devices/{id}/push-token:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    put:
+      tags: [devices]
+      operationId: updatePushToken
+      summary: Set the FCM token. Owner and the same device only.
+      x-status: planned
+      x-phase: 3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushTokenRequest' }
+      responses:
+        '204': { description: Updated }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/devices/{id}/pin:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    post:
+      tags: [devices]
+      operationId: createDevicePin
+      summary: Generate a one-time 6-digit PIN for display (target device only).
+      description: Stored hashed for 5 minutes. Five wrong attempts invalidate it.
+      x-status: planned
+      x-phase: 4
+      responses:
+        '200':
+          description: PIN to show on the target's screen
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevicePin' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/realtime/ticket:
+    post:
+      tags: [realtime]
+      operationId: createRealtimeTicket
+      summary: Single-use 30 s ticket for the Socket.IO handshake.
+      description: |
+        Requires a **device-bound** access token. Limit 20 per minute per device. Pass the ticket in
+        the handshake `auth` payload, never in the URL. See `asyncapi.yaml`.
+      x-status: planned
+      x-phase: 3
+      responses:
+        '200':
+          description: Ticket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealtimeTicket' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/dev/push-test:
+    post:
+      tags: [dev]
+      operationId: devPushTest
+      summary: "Send a `test` push to the caller's own device. Not available in production."
+      x-status: planned
+      x-phase: 3
+      responses:
+        '204': { description: Push queued }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------- sessions (Phase 4)
+  /api/sessions/request:
+    post:
+      tags: [sessions]
+      operationId: requestSession
+      summary: Ask to view another device's screen.
+      description: |
+        Checks run in a fixed order and fail closed (integrity, own device, target lookup, rate
+        limits, blocks, target settings and PIN, busy, presence). A blocked caller gets the same
+        `404 device_not_found` as a non-existent ID. The same `Idempotency-Key` from the same device
+        returns the original result. Requests expire after 60 s.
+      x-status: planned
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionRequestBody' }
+      responses:
+        '201':
+          description: Request created and delivered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionRequestResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/sessions/history:
+    get:
+      tags: [sessions]
+      operationId: listSessionHistory
+      summary: The caller's sessions as either party, newest first.
+      x-status: planned
+      x-phase: 4
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string, maxLength: 256 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        '200':
+          description: A page of history
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionHistoryPage' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/sessions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [sessions]
+      operationId: getSession
+      summary: Target-facing details of a session. Parties only.
+      description: A caller who is not a party gets `404 not_found`.
+      x-status: planned
+      x-phase: 4
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDetails' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/sessions/{id}/accept:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [sessions]
+      operationId: acceptSession
+      summary: Accept a request. Target device only, before it expires.
+      description: |
+        `controlGranted: true` is rejected with `400` in v1; control is granted separately after the
+        session is connected (Phase 7).
+      x-status: planned
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AcceptRequest' }
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionStateChange' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/sessions/{id}/reject:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [sessions]
+      operationId: rejectSession
+      summary: Reject a request. Target device only.
+      x-status: planned
+      x-phase: 4
+      responses:
+        '200':
+          description: Rejected
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionStateChange' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/sessions/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [sessions]
+      operationId: cancelSession
+      summary: Cancel a pending request. Controller device only.
+      x-status: planned
+      x-phase: 4
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionStateChange' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/sessions/{id}/disconnect:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [sessions]
+      operationId: disconnectSession
+      summary: End a session. Either party.
+      x-status: planned
+      x-phase: 4
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DisconnectRequest' }
+      responses:
+        '200':
+          description: Ended
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionStateChange' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/sessions/{id}/report:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [sessions]
+      operationId: reportSession
+      summary: Report the other party. Either party.
+      x-status: planned
+      x-phase: 4
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReportRequest' }
+      responses:
+        '204': { description: Report recorded }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/settings:
+    get:
+      tags: [settings]
+      operationId: getSettings
+      summary: The caller's privacy settings.
+      x-status: planned
+      x-phase: 4
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [settings]
+      operationId: updateSettings
+      summary: Replace the caller's privacy settings.
+      x-status: planned
+      x-phase: 4
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserSettings' }
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserSettings' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/blocks:
+    get:
+      tags: [settings]
+      operationId: listBlocks
+      summary: Users the caller has blocked.
+      x-status: planned
+      x-phase: 4
+      responses:
+        '200':
+          description: Blocks
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [blocks]
+                properties:
+                  blocks:
+                    type: array
+                    items: { $ref: '#/components/schemas/Block' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [settings]
+      operationId: createBlock
+      summary: Block a user.
+      description: 'TODO(server): request body shape is not specified in the brief; confirm against the architecture doc.'
+      x-status: planned
+      x-phase: 4
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [userId]
+              properties:
+                userId: { $ref: '#/components/schemas/Uuid' }
+      responses:
+        '204': { description: Blocked }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/blocks/{userId}:
+    delete:
+      tags: [settings]
+      operationId: deleteBlock
+      summary: Unblock a user.
+      x-status: planned
+      x-phase: 4
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/Uuid' }
+      responses:
+        '204': { description: Unblocked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------- webrtc (Phase 5)
+  /api/webrtc/ice-config:
+    get:
+      tags: [webrtc]
+      operationId: getIceConfig
+      summary: Short-lived ICE / TURN configuration for an accepted or connected session.
+      description: |
+        Parties only; any other caller or session state gets `404`. Credentials last 10 minutes
+        (TURN REST scheme). Limit 10 per session per device. The response is never logged.
+      x-status: planned
+      x-phase: 5
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/Uuid' }
+      responses:
+        '200':
+          description: ICE configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IceConfig' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  # ---------------------------------------------------------------- remote control (Phase 7, v2)
+  /api/sessions/{id}/control/request:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [sessions]
+      operationId: requestControl
+      summary: Controller asks the target for control. Does not change `controlGranted`.
+      description: Behind `FEATURE_REMOTE_CONTROL`; with the flag off every control endpoint is `404`. Limit 3 per session.
+      x-status: planned
+      x-phase: 7
+      responses:
+        '204': { description: Request delivered to the target }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/sessions/{id}/control/grant:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [sessions]
+      operationId: grantControl
+      summary: Target grants control for this session. Target device only, session must be connected.
+      x-status: planned
+      x-phase: 7
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Control granted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/sessions/{id}/control/revoke:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [sessions]
+      operationId: revokeControl
+      summary: Target revokes control at any time. Also happens automatically when the session ends.
+      x-status: planned
+      x-phase: 7
+      responses:
+        '204': { description: Control revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token: EdDSA (Ed25519) JWT, 15 minutes. Claims `sub` (user id) and `did` (device id
+        or null before the device is registered). The app must not make decisions from its contents.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: A UUID chosen by the client. Retrying with the same key returns the original result.
+      schema: { type: string, format: uuid }
+    DeviceId:
+      name: id
+      in: path
+      required: true
+      description: The device's internal UUID (not its 9–10 digit public ID).
+      schema: { $ref: '#/components/schemas/Uuid' }
+    SessionId:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Uuid' }
+
+  responses:
+    ValidationFailed:
+      description: The request is malformed or fails validation (unknown fields are rejected).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing, invalid or expired credentials.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: The resource does not exist, or the caller may not know that it does.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: The request conflicts with the current state.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many requests. Wait for `Retry-After` seconds.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: { type: integer, minimum: 0 }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ServiceUnavailable:
+      description: A dependency is unavailable. The action was denied (fail closed); retry later.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying, when known.
+          schema: { type: integer, minimum: 0 }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    # ------------------------------------------------------------ errors
+    ErrorCode:
+      type: string
+      description: |
+        Stable machine-readable error code. The values below are the codes implemented in the
+        server today (`src/common/errors/codes.ts`; a unit test keeps this list identical).
+        Later phases add more codes (see `x-planned-codes`); the app must treat unknown codes as
+        a generic error for the HTTP status.
+      enum:
+        - validation_failed
+        - unauthorized
+        - forbidden
+        - not_found
+        - rate_limited
+        - conflict
+        - internal_error
+        - service_unavailable
+        - payload_too_large
+      x-planned-codes:
+        phase-2:
+          [
+            email_taken,
+            invalid_credentials,
+            invalid_refresh_token,
+            refresh_reuse_detected,
+            integrity_unavailable,
+          ]
+        phase-4: [invalid_session_state, device_not_found, target_busy, device_offline]
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message:
+              type: string
+              description: Human-readable. Never contains secrets, tokens or other users' data.
+            requestId:
+              type: string
+              description: Same value as the `x-request-id` response header; quote it in bug reports.
+
+    # ------------------------------------------------------------ health
+    HealthStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, const: ok }
+    ReadyStatus:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status: { type: string, const: ok }
+        checks:
+          type: object
+          additionalProperties: false
+          required: [database, redis]
+          properties:
+            database: { type: string, const: ok }
+            redis: { type: string, const: ok }
+
+    # ------------------------------------------------------------ primitives
+    Uuid: { type: string, format: uuid }
+    Timestamp: { type: string, format: date-time }
+
+    # ------------------------------------------------------------ auth / account
+    IntegrityNonce:
+      type: object
+      additionalProperties: false
+      required: [nonce]
+      properties:
+        nonce: { type: string, description: '32 random bytes, base64url' }
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, email, displayName, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        email: { type: string, format: email, maxLength: 254 }
+        displayName: { type: string, minLength: 2, maxLength: 50 }
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
+    TokenPair:
+      type: object
+      additionalProperties: false
+      required: [accessToken, refreshToken]
+      properties:
+        accessToken: { type: string, description: 'JWT, 15 minutes. Keep in memory only.' }
+        refreshToken:
+          {
+            type: string,
+            description: 'Opaque, single use (rotated on every refresh). Keystore only.',
+          }
+    AuthResponse:
+      type: object
+      additionalProperties: false
+      required: [user, accessToken, refreshToken]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        accessToken: { type: string }
+        refreshToken: { type: string }
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [displayName, email, password, integrityToken]
+      properties:
+        displayName: { type: string, minLength: 2, maxLength: 50 }
+        email: { type: string, format: email, maxLength: 254 }
+        password:
+          {
+            type: string,
+            minLength: 10,
+            maxLength: 128,
+            description: At least one letter and one digit.,
+          }
+        integrityToken:
+          {
+            type: string,
+            description: Play Integrity token bound to a nonce from /api/integrity/nonce.,
+          }
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, integrityToken]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 1, maxLength: 128 }
+        integrityToken: { type: string }
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    DeleteAccountRequest:
+      type: object
+      additionalProperties: false
+      required: [password]
+      properties:
+        password: { type: string, minLength: 1, maxLength: 128 }
+
+    # ------------------------------------------------------------ devices / realtime
+    DeviceStatus:
+      type: string
+      description: From server-side presence. The app may add its own `connecting` / `unknown` states locally.
+      enum: [online, offline]
+    Device:
+      type: object
+      additionalProperties: false
+      required: [id, publicId, name, platform, status, isCurrentDevice, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        publicId:
+          type: string
+          pattern: '^[1-9][0-9]{8,9}$'
+          description: Server-assigned, random, 9–10 digits (length is still an open decision). Knowing it grants nothing.
+        name: { type: string, minLength: 2, maxLength: 40 }
+        model: { type: [string, 'null'] }
+        platform: { type: string, examples: [android] }
+        status: { $ref: '#/components/schemas/DeviceStatus' }
+        isCurrentDevice: { type: boolean }
+        lastSeenAt: { oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
+    RegisterDeviceRequest:
+      type: object
+      additionalProperties: false
+      required: [name, model, integrityToken]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 40 }
+        model: { type: string, maxLength: 100 }
+        integrityToken: { type: string }
+        fcmToken: { type: string, description: Never logged. }
+    RegisterDeviceResponse:
+      type: object
+      additionalProperties: false
+      required: [device, accessToken, refreshToken]
+      properties:
+        device: { $ref: '#/components/schemas/Device' }
+        accessToken: { type: string, description: Device-bound (`did` claim set). }
+        refreshToken:
+          {
+            type: string,
+            description: Starts a new family bound to this device; the old family is revoked.,
+          }
+    RenameDeviceRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 40 }
+    PushTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [fcmToken]
+      properties:
+        fcmToken: { type: string }
+    DevicePin:
+      type: object
+      additionalProperties: false
+      required: [pin, expiresAt]
+      properties:
+        pin: { type: string, pattern: '^[0-9]{6}$' }
+        expiresAt: { $ref: '#/components/schemas/Timestamp' }
+    RealtimeTicket:
+      type: object
+      additionalProperties: false
+      required: [ticket]
+      properties:
+        ticket:
+          { type: string, description: '32 random bytes, base64url. Single use, valid for 30 s.' }
+
+    # ------------------------------------------------------------ sessions
+    SessionStatus:
+      type: string
+      description: |
+        Server-side lifecycle. Legal transitions: waiting_for_approval → accepted | rejected |
+        cancelled | expired; accepted → connected | ended | failed; connected → ended | failed.
+      enum:
+        - waiting_for_approval
+        - accepted
+        - connected
+        - rejected
+        - expired
+        - cancelled
+        - ended
+        - failed
+    SessionRole:
+      type: string
+      enum: [controller, target]
+    SessionRequestBody:
+      type: object
+      additionalProperties: false
+      required: [targetPublicId, integrityToken]
+      properties:
+        targetPublicId:
+          {
+            type: string,
+            description: 'Digits only after normalisation; separators and spaces are stripped.',
+          }
+        pin:
+          {
+            type: string,
+            pattern: '^[0-9]{6}$',
+            description: Required when the target has PIN mode on.,
+          }
+        integrityToken: { type: string }
+    SessionRequestResult:
+      type: object
+      additionalProperties: false
+      required: [sessionId, status, expiresAt, targetDeviceName]
+      properties:
+        sessionId: { $ref: '#/components/schemas/Uuid' }
+        status: { $ref: '#/components/schemas/SessionStatus' }
+        expiresAt: { $ref: '#/components/schemas/Timestamp' }
+        targetDeviceName: { type: string }
+    SessionDetails:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          status,
+          expiresAt,
+          controllerDisplayName,
+          controllerDeviceName,
+          controllerAccountAgeDays,
+          previouslyApproved,
+        ]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        status: { $ref: '#/components/schemas/SessionStatus' }
+        expiresAt: { $ref: '#/components/schemas/Timestamp' }
+        controllerDisplayName: { type: string }
+        controllerDeviceName: { type: string }
+        controllerAccountAgeDays: { type: integer, minimum: 0 }
+        previouslyApproved:
+          {
+            type: boolean,
+            description: True if this controller account was accepted before by this user.,
+          }
+        relayOnly: { type: boolean }
+        controlGranted: { type: boolean, description: Always false in v1. }
+    SessionStateChange:
+      type: object
+      additionalProperties: false
+      required: [sessionId, status]
+      properties:
+        sessionId: { $ref: '#/components/schemas/Uuid' }
+        status: { $ref: '#/components/schemas/SessionStatus' }
+    AcceptRequest:
+      type: object
+      additionalProperties: false
+      required: [controlGranted]
+      properties:
+        controlGranted:
+          type: boolean
+          const: false
+          description: Must be `false` in v1; `true` is rejected with 400.
+    DisconnectRequest:
+      type: object
+      additionalProperties: false
+      required: [endReason]
+      properties:
+        endReason:
+          type: string
+          maxLength: 64
+          description: 'TODO(server): a fixed list of reasons is defined in Phase 4.'
+    ReportRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          maxLength: 64
+          description: 'TODO(server): a fixed list of reasons is defined in Phase 4.'
+        note: { type: string, maxLength: 500 }
+    SessionHistoryItem:
+      type: object
+      additionalProperties: false
+      required: [id, role, remoteDeviceName, remoteDevicePublicId, requestedAt, status]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        role: { $ref: '#/components/schemas/SessionRole' }
+        remoteDeviceName: { type: string }
+        remoteDevicePublicId: { type: string }
+        requestedAt: { $ref: '#/components/schemas/Timestamp' }
+        connectedAt: { oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }
+        endedAt: { oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }
+        durationSeconds: { type: [integer, 'null'], minimum: 0 }
+        status: { $ref: '#/components/schemas/SessionStatus' }
+    SessionHistoryPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/SessionHistoryItem' }
+        nextCursor:
+          {
+            type: [string, 'null'],
+            description: Pass as `cursor` for the next page; null on the last page.,
+          }
+    UserSettings:
+      type: object
+      additionalProperties: false
+      required: [onlyMyDevices, requirePin, relayOnlyDefault]
+      properties:
+        onlyMyDevices: { type: boolean }
+        requirePin: { type: boolean }
+        relayOnlyDefault: { type: boolean }
+    Block:
+      type: object
+      additionalProperties: false
+      required: [blockedUserId, createdAt]
+      properties:
+        blockedUserId: { $ref: '#/components/schemas/Uuid' }
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
+
+    # ------------------------------------------------------------ webrtc
+    IceServer:
+      type: object
+      additionalProperties: false
+      required: [urls]
+      properties:
+        urls: { type: array, items: { type: string } }
+        username: { type: string }
+        credential: { type: string }
+    IceConfig:
+      type: object
+      additionalProperties: false
+      required: [iceServers, iceTransportPolicy, ttlSeconds]
+      properties:
+        iceServers:
+          type: array
+          items: { $ref: '#/components/schemas/IceServer' }
+        iceTransportPolicy: { type: string, enum: [all, relay] }
+        ttlSeconds: { type: integer, examples: [600] }
