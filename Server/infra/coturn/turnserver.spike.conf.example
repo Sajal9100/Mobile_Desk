@@ -1,0 +1,35 @@
+# MobileDesk — THROWAWAY spike TURN relay (Server Phase 1)
+#
+# Copy to /etc/turnserver.conf ON THE VM and replace the two placeholders there.
+# Never commit the filled-in file. The password is generated on the VM and never leaves it
+# except through a password manager.
+#
+# This uses a long-term static credential, which is acceptable only because the relay lives
+# for days, is used by the team only, and is destroyed afterwards. Production TURN (Phase 5)
+# uses short-lived HMAC credentials (use-auth-secret).
+
+listening-port=3478
+external-ip=<PUBLIC_IP>
+min-port=49160
+max-port=49200
+realm=spike.mobiledesk.invalid
+lt-cred-mech
+user=spike:<LONG_RANDOM_PASSWORD>      # generated on the VM (openssl rand -base64 32), never committed
+fingerprint
+no-cli
+no-multicast-peers
+
+# Refuse to relay to private / internal networks.
+# 169.254.0.0/16 also covers the EC2 instance-metadata address 169.254.169.254.
+# 172.16.0.0/12 also covers the default AWS VPC range 172.31.0.0/16.
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+
+total-quota=20
+user-quota=4
+log-file=stdout
