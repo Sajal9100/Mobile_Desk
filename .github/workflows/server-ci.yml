@@ -1,0 +1,89 @@
+# CI for the MobileDesk server (Server/). The app (RemoteAccessApp/) has its own concerns.
+#
+# GitHub only reads workflows from the repository root, so this lives here and every step runs
+# inside Server/. Third-party actions are pinned by commit SHA (the comment shows the tag).
+
+name: server-ci
+
+on:
+  pull_request:
+    paths:
+      - 'Server/**'
+      - '.github/workflows/server-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Server/**'
+      - '.github/workflows/server-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: Server
+
+    steps:
+      - name: Check out (full history for gitleaks)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: Server/.nvmrc
+          cache: npm
+          cache-dependency-path: Server/package-lock.json
+
+      # Lockfile only, and no dependency may run code at install time.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate the Prisma client
+        run: npm run prisma:generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Formatting
+        run: npm run format:check
+
+      - name: Contract types are up to date
+        run: npm run contracts:check
+
+      - name: Unit tests
+        run: npm test
+
+      # Builds dist/ first, then runs the Testcontainers (Postgres 16, Redis 7) and real-process tests.
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: Dependency audit (high and critical)
+        run: npm audit --audit-level=high
+
+      - name: Secret scan (gitleaks, full history)
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Least privilege: no PR comments, no artifact upload. Findings fail the job.
+          GITLEAKS_ENABLE_COMMENTS: 'false'
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
+          # Only needed if this repository ever moves to a GitHub organization:
+          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+      # No push yet (Phase 6 adds the registry, scanning and deploy).
+      - name: Build the Docker image
+        run: docker build --tag mobiledesk-server:ci .

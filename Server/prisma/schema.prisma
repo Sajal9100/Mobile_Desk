@@ -1,0 +1,24 @@
+// MobileDesk database schema.
+//
+// Prisma 7: the connection URL is NOT allowed here. It lives in prisma.config.ts and the
+// runtime connects through a driver adapter (see src/common/database/prisma.service.ts).
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Phase 0: a trivial table so the first migration has something to create.
+// Real models arrive with their phases (users: Phase 2, devices: Phase 3, sessions: Phase 4).
+model AppMeta {
+  key       String   @id
+  value     String
+  updatedAt DateTime @default(now()) @db.Timestamptz
+
+  @@map("app_meta")
+}

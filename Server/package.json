@@ -1,0 +1,78 @@
+{
+  "name": "mobiledesk-server",
+  "version": "0.1.0",
+  "description": "MobileDesk server: API, realtime and worker processes",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "scripts": {
+    "dev:api": "nest start --watch --entryFile main-api",
+    "dev:realtime": "nest start --watch --entryFile main-realtime",
+    "dev:worker": "nest start --watch --entryFile main-worker",
+    "build": "npm run prisma:generate && nest build",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "npm run build && vitest run --config vitest.integration.config.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "contracts:types": "openapi-typescript contracts/openapi.yaml -o src/generated/openapi.ts",
+    "contracts:check": "npm run contracts:types && git diff --exit-code -- src/generated/openapi.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "^12.6.1",
+    "@nestjs/core": "^12.6.1",
+    "@nestjs/platform-fastify": "^12.6.1",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "ioredis": "^6.1.0",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^4.6.7"
+  },
+  "overrides": {
+    "openapi-typescript": {
+      "typescript": "$typescript"
+    },
+    "@prisma/config": {
+      "effect": "3.22.5"
+    }
+  },
+  "devDependencies": {
+    "@asyncapi/parser": "^3.6.6",
+    "@eslint/js": "^10.0.1",
+    "@nestjs/cli": "^12.0.15",
+    "@nestjs/testing": "^12.6.1",
+    "@redocly/openapi-core": "^2.83.0",
+    "@testcontainers/postgresql": "^12.2.2",
+    "@testcontainers/redis": "^12.2.2",
+    "@types/node": "^26.6.10",
+    "@types/pg": "^8.23.1",
+    "eslint": "^10.15.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.14.0",
+    "openapi-typescript": "^7.13.0",
+    "prettier": "^3.10.1",
+    "prisma": "^7.10.1",
+    "testcontainers": "^12.2.2",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.74.0",
+    "vitest": "^5.1.1"
+  },
+  "allowScripts": {
+    "@scarf/scarf": false,
+    "protobufjs": false,
+    "ssh2": false,
+    "prisma": false,
+    "@prisma/engines": false
+  }
+}
