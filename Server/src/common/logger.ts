@@ -17,6 +17,7 @@ export const SENSITIVE_KEYS = [
   'credential',
   'fcmToken',
   'integrityToken',
+  'pin',
   'authorization',
 ] as const;
 
