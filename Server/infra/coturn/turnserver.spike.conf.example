@@ -1,12 +1,16 @@
-# MobileDesk — THROWAWAY spike TURN relay (Server Phase 1)
+# MobileDesk - THROWAWAY spike TURN relay (Server Phase 1)
 #
-# Copy to /etc/turnserver.conf ON THE VM and replace the two placeholders there.
-# Never commit the filled-in file. The password is generated on the VM and never leaves it
-# except through a password manager.
+# Install ON THE VM as /etc/turnserver.conf (owner root, group turnserver, mode 640; see
+# SPIKE_RELAY.md section 2) and replace the two placeholders there. Never commit the filled-in
+# file. The password is generated on the VM and never leaves it except through a password manager.
 #
 # This uses a long-term static credential, which is acceptable only because the relay lives
 # for days, is used by the team only, and is destroyed afterwards. Production TURN (Phase 5)
 # uses short-lived HMAC credentials (use-auth-secret).
+#
+# coturn only skips lines that START with '#'. A '#' after a value becomes part of that value,
+# so never put a comment at the end of a line (a trailing comment on the user= line would turn
+# into part of the password and every login would fail).
 
 listening-port=3478
 external-ip=<PUBLIC_IP>
@@ -14,7 +18,11 @@ min-port=49160
 max-port=49200
 realm=spike.mobiledesk.invalid
 lt-cred-mech
-user=spike:<LONG_RANDOM_PASSWORD>      # generated on the VM (openssl rand -base64 32), never committed
+
+# Generate the password ON THE VM with `openssl rand -hex 24` (hex has no characters that need
+# care in this file) and never commit it.
+user=spike:<LONG_RANDOM_PASSWORD>
+
 fingerprint
 no-cli
 no-multicast-peers
