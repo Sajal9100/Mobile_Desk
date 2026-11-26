@@ -2,30 +2,30 @@
 
 ```text
 PHASE: 0 — Foundation
-STATUS: Partial — all code, tests and contracts are done; the gate items that need Docker
-        (compose up, Testcontainers) and GitHub (CI run) have NOT been executed yet.
-GATE: Not passed — see the checklist and evidence below.
+STATUS: Partial — code, tests, contracts and the Docker gate items are done and verified
+        (2026-11-26); only the GitHub items (CI run, app-team handover) remain.
+GATE: Not passed — 3 of 5 items passed; CI run and contract hand-over need your OK (see below).
 ```
 
 ## Gate checklist (brief §4)
 
-| Gate item                                                                                            | State                 | Evidence / what is missing                                                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docker compose up` starts Postgres, Redis, API, realtime, worker; `/health` and `/ready` return 200 | ☐ **Not run**         | Docker is not installed on the dev machine. `infra/docker-compose.yml` parses (YAML + merge keys checked) and all published ports are `127.0.0.1`. Closest verified equivalent: the built API/realtime processes boot and answer `/health` 200 against dead dependencies (`startup.integration.spec.ts`). **Needs:** Docker Desktop, then the commands in README → "Run the whole stack in Docker". |
-| Server refuses to start with a missing required variable                                             | ☑ Passed              | `startup.integration.spec.ts`: all three entry points exit non-zero with `DATABASE_URL: missing`; output contains neither the Redis password nor the bad URL value. Unit tests cover every required variable.                                                                                                                                                                                       |
-| CI green on a pull request, incl. gitleaks and `npm audit`                                           | ☐ **Not run**         | Workflow written (`.github/workflows/server-ci.yml`), not yet pushed. Local equivalents: `npm audit --audit-level=high` exit 0; gitleaks 8.30.1 over history (4 commits): no leaks.                                                                                                                                                                                                                 |
-| Contract drafts committed and shared with the app team                                               | ◐ Written, not shared | `contracts/openapi.yaml` (35 operations) and `contracts/asyncapi.yaml` (14 events) validate and are unit-tested; commit and notification of the app team are pending your OK.                                                                                                                                                                                                                       |
-| Phase report submitted                                                                               | ☑ This document       |                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Gate item                                                                                            | State                     | Evidence / what is missing                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker compose up` starts Postgres, Redis, API, realtime, worker; `/health` and `/ready` return 200 | ☑ **Passed** (2026-11-26) | Docker 29.9.3 / Compose 5.7.1. `up -d --build`: both images built, `migrate` exited 0, api/realtime/postgres/redis `healthy`, worker up. `GET /health` → 200 and `GET /ready` → 200 `{database: ok, redis: ok}` on :3000 and :3001; unknown route → 404 standard shape. Two defects found and fixed on the way (see "Defects found by the Docker run"). Host port 5432 was taken by a local Postgres, so the run used `POSTGRES_HOST_PORT=55432` (supported override, `.env` unchanged). |
+| Server refuses to start with a missing required variable                                             | ☑ Passed                  | `startup.integration.spec.ts`: all three entry points exit non-zero with `DATABASE_URL: missing`; output contains neither the Redis password nor the bad URL value. Unit tests cover every required variable.                                                                                                                                                                                                                                                                            |
+| CI green on a pull request, incl. gitleaks and `npm audit`                                           | ☐ **Not run**             | Workflow written (`.github/workflows/server-ci.yml`), not yet pushed. Local equivalents: `npm audit --audit-level=high` exit 0; gitleaks 8.30.1 over history (4 commits): no leaks.                                                                                                                                                                                                                                                                                                      |
+| Contract drafts committed and shared with the app team                                               | ◐ Written, not shared     | `contracts/openapi.yaml` (35 operations) and `contracts/asyncapi.yaml` (14 events) validate and are unit-tested; commit and notification of the app team are pending your OK.                                                                                                                                                                                                                                                                                                            |
+| Phase report submitted                                                                               | ☑ This document           |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 Required tests (brief §3):
 
-| Test                                                                                       | Result                                                                                                                                                                                           |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Config: missing `DATABASE_URL` → non-zero exit, no env values in output                    | ☑ `config.spec.ts` + `startup.integration.spec.ts` (real processes)                                                                                                                              |
-| Logger: `password`, `token`, `sdp` print `[REDACTED]`                                      | ☑ `logger.spec.ts` — every sensitive key at nesting depth 0–3, arrays, query strings, auth headers                                                                                               |
-| Errors: unknown route → 404 standard shape; generic error → 500 `internal_error`, no stack | ☑ `http-pipeline.spec.ts`                                                                                                                                                                        |
-| Validation: unknown field → `400 validation_failed`                                        | ☑ `http-pipeline.spec.ts` (value never echoed)                                                                                                                                                   |
-| `/ready` returns 503 when Redis is stopped (integration)                                   | ☐ **Written, not run** (`ready.integration.spec.ts`, needs Docker). Partial evidence: with Postgres and Redis unreachable the real process answers `/ready` 503 `service_unavailable` in ~70 ms. |
+| Test                                                                                       | Result                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Config: missing `DATABASE_URL` → non-zero exit, no env values in output                    | ☑ `config.spec.ts` + `startup.integration.spec.ts` (real processes)                                                                                                                                   |
+| Logger: `password`, `token`, `sdp` print `[REDACTED]`                                      | ☑ `logger.spec.ts` — every sensitive key at nesting depth 0–3, arrays, query strings, auth headers                                                                                                    |
+| Errors: unknown route → 404 standard shape; generic error → 500 `internal_error`, no stack | ☑ `http-pipeline.spec.ts`                                                                                                                                                                             |
+| Validation: unknown field → `400 validation_failed`                                        | ☑ `http-pipeline.spec.ts` (value never echoed)                                                                                                                                                        |
+| `/ready` returns 503 when Redis is stopped (integration)                                   | ☑ `ready.integration.spec.ts` (Testcontainers Postgres 16 + Redis 7): 503 `service_unavailable` after stopping Redis, and after stopping Postgres; 200 with both up; `app_meta` exists after migrate. |
 
 ## Results
 
@@ -34,14 +34,21 @@ Required tests (brief §3):
 | `npm run typecheck`                                        | pass                                                |
 | `npm run lint` (type-checked rules, `no-console: error`)   | pass                                                |
 | `npm run format:check`                                     | pass                                                |
-| `npm test` (unit)                                          | **110 / 110 pass** (5 files)                        |
+| `npm test` (unit)                                          | **112 / 112 pass** (6 files)                        |
 | `npm run test:integration` — `startup.integration.spec.ts` | **7 / 7 pass** (needs a build, not Docker)          |
-| `npm run test:integration` — `ready.integration.spec.ts`   | not run (Docker)                                    |
+| `npm run test:integration` — `ready.integration.spec.ts`   | **5 / 5 pass** (Docker; 12 / 12 integration total)  |
 | `npm run contracts:types`                                  | deterministic (regenerating produces no diff)       |
 | `npm run build`                                            | pass (ESM output in `dist/`)                        |
 | `npm audit --audit-level=high`                             | exit 0 (8 moderate remain, dev-only — see Security) |
 | gitleaks 8.30.1 (checksum verified), full history          | no leaks                                            |
-| `docker build`                                             | **not run** (Docker) — CI runs it                   |
+| `docker build` / compose build (api image + migrate image) | pass                                                |
+
+## Defects found by the Docker run (2026-11-26)
+
+Both were invisible without Docker; both are fixed and covered by tests.
+
+1. **`.env.example`: `CORS_ORIGINS=   # comment`.** Compose reads an empty value followed by an inline comment as the _value_ `# empty = no CORS…`, so api, realtime and worker crash-looped with `CORS_ORIGINS: invalid_format`. The comment moved to its own line (`.env.example`, local `.env`). Regression: `test/unit/env-example.spec.ts` (no inline comment after a value; no real secrets in the example).
+2. **First `/ready` after startup returned 503 with a healthy Redis.** `RedisService` uses `enableOfflineQueue: false` (fail fast), so a `PING` sent while ioredis was still in its initial handshake was rejected. `RedisService.ping()` now waits (≤ 800 ms, below the 1 s readiness timeout) only while the first connection is being established; a Redis that is down (`reconnecting`/`end`) still fails immediately, so fail-closed is unchanged. Regression: `ready.integration.spec.ts` (it failed 3/5 before the fix, passes 5/5 after).
 
 ## IMPLEMENTED
 
@@ -118,10 +125,10 @@ Derived from the 8 briefs and the app plan §11–12, because the "Server Archit
 
 ## OPEN QUESTIONS / BLOCKERS
 
-1. **Docker Desktop** must be installed to finish the gate (compose, `ready.integration.spec.ts`, `docker build`).
+1. ~~Docker Desktop~~ — installed; compose, integration tests and image builds are done (see above).
 2. **Architecture doc** not provided — contracts are derived; reconcile when it arrives.
 3. **Approval to push** the branch and open a PR (CI, gitleaks run, app-team notification).
-4. Windows-only quirk: Vitest fails when started from a shell whose cwd has a lowercase drive letter (two module instances of `vitest`). Documented in the README; Linux/CI unaffected.
+4. Local port 5432 is occupied by a native Postgres on the dev machine; use `POSTGRES_HOST_PORT=55432` for compose here. Windows-only quirk: Vitest fails when started from a shell whose cwd has a lowercase drive letter (two module instances of `vitest`). Documented in the README; Linux/CI unaffected.
 5. Prisma CLI install scripts are denied; Linux CI/Docker will confirm the schema-engine binary is bundled. If not, approve `@prisma/engines` narrowly.
 6. First gitleaks run in CI scans the app's history too; the local scan of the current history is clean.
 7. Ordering exception: Phase 1 (TURN relay) was started before this gate passed (reason in the Phase 1 report). It shares no code with Phase 0.
