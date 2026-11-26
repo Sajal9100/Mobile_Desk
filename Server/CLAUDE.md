@@ -2,7 +2,7 @@
 
 **Before any work, read** `docs/briefs/00_SERVER_AGENT_RULES.md` and the brief of the current phase (`docs/briefs/Phase_N_*.md`). If a brief and the architecture doc disagree, stop and ask.
 
-- **Current phase:** 0 (foundation): gate passed and report submitted; accepted when PR #2 is merged. Do not start Phase 2 before that. Phase 1 (throwaway TURN relay) runs alongside by decision; it lives on its own branch.
+- **Current phase:** 0 (foundation) is accepted (PR #2 merged 2026-11-26). Next is Phase 2, once its prerequisites are settled (see the Phase 0 report). Phase 1 (throwaway TURN relay) runs alongside by decision; it lives on its own branch.
 - **Never touch `../RemoteAccessApp`.** It has uncommitted work that is not yours. Stage only `Server/` and `.github/`.
 - **Contract first:** edit `contracts/*.yaml`, run `npm run contracts:types`, then code.
 - **Stack is ESM** (Nest 12): `"type": "module"`, NodeNext, import local files with a `.js` suffix. TypeScript is pinned to 6.0.x (typescript-eslint does not support 7). Prisma is pinned to 7.10.1 (`latest` on npm is an 8.0 release candidate).

@@ -2,8 +2,8 @@
 
 ```text
 PHASE: 0 — Foundation
-STATUS: Complete — all gate items are verified (2026-11-26); awaiting owner acceptance (merge of PR #2).
-GATE: Passed. CI was green on PR #2 at 26eb1db; the full gate was re-run locally on the close-out commit (see Results). The CI run of the close-out commit is reported on the PR.
+STATUS: Complete — all gate items are verified (2026-11-26). Accepted: the owner merged PR #2 on 2026-11-26.
+GATE: Passed. CI was green on PR #2 at 26eb1db (merged as 024ce58). The close-out (PR #3) re-ran the full gate locally (see Results); its CI run is reported on PR #3.
 ```
 
 ## Gate checklist (brief §4)
@@ -140,7 +140,7 @@ Each is deliberate; none weakens a requirement.
 
 1. ~~Docker Desktop~~ — installed; compose, integration tests and image builds are done (see above).
 2. **Architecture doc** not provided — contracts are derived; reconcile when it arrives.
-3. ~~Approval to push~~ — done: PR #2 open, CI green, not merged.
+3. ~~Approval to push~~ — done: PR #2 merged as 024ce58 (2026-11-26).
 4. Local port 5432 is occupied by a native Postgres on the dev machine; use `POSTGRES_HOST_PORT=55432` for compose here. Windows-only quirk: Vitest fails when started from a shell whose cwd has a lowercase drive letter (two module instances of `vitest`). Documented in the README; Linux/CI unaffected.
 5. ~~Prisma CLI install scripts denied~~ — confirmed: Linux CI and the Docker build (`prisma generate`, `prisma migrate deploy`) work with scripts denied; no `@prisma/engines` approval is needed.
 6. ~~First gitleaks run in CI~~ — CI scanned the full history (app commits included): no leaks.
@@ -148,4 +148,4 @@ Each is deliberate; none weakens a requirement.
 
 ## NEXT PHASE
 
-After this gate is accepted: **Phase 2 — Accounts and Authentication** (decide first: Play Integrity classic vs standard; need the Google Cloud project, Play Console app, package name and release-cert SHA-256, or run with `INTEGRITY_MODE=bypass` locally).
+Gate accepted (PR #2 merged). Next: **Phase 2 — Accounts and Authentication** (decide first: Play Integrity classic vs standard; need the Google Cloud project, Play Console app, package name and release-cert SHA-256, or run with `INTEGRITY_MODE=bypass` locally).
