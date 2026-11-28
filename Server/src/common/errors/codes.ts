@@ -12,6 +12,13 @@ export const ERROR_CODES = [
   'internal_error',
   'service_unavailable',
   'payload_too_large',
+  // Phase 2 (accounts and authentication)
+  'email_taken',
+  'invalid_credentials',
+  'invalid_refresh_token',
+  'refresh_reuse_detected',
+  'integrity_failed',
+  'integrity_unavailable',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

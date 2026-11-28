@@ -1,6 +1,9 @@
 import { Controller, Get, Inject } from '@nestjs/common';
+import { Public } from '../../common/guards/actor.js';
 import { ReadinessService, type ReadinessReport } from './readiness.service.js';
 
+/** Probes carry no data and need no token. */
+@Public()
 @Controller()
 export class HealthController {
   constructor(@Inject(ReadinessService) private readonly readiness: ReadinessService) {}

@@ -2,17 +2,17 @@
 
 Backend for the MobileDesk Android app (`../RemoteAccessApp`): REST API, Socket.IO realtime and a BullMQ worker, on Node.js + NestJS (Fastify) + PostgreSQL + Redis.
 
-> **Status: Phase 0 (foundation).** The server builds, runs, refuses bad config, logs safely, and has CI and draft contracts. There are no business endpoints yet beyond `GET /health` and `GET /ready`. See [`docs/phase-reports/`](docs/phase-reports/).
+> **Status: Phase 2 (accounts and authentication).** On top of the Phase 0 foundation the server now has registration, login, refresh-token rotation with reuse detection, logout, account deletion, Play Integrity verification and `GET /api/me`. Devices, realtime, sessions and WebRTC follow in later phases. See [`docs/phase-reports/`](docs/phase-reports/).
 
 The build is split into phases with a gate each. Read [`docs/briefs/00_SERVER_AGENT_RULES.md`](docs/briefs/00_SERVER_AGENT_RULES.md) and the current phase brief before changing anything.
 
 ## Processes
 
-| Process  | Entry point            | Listens on      | Purpose                             |
-| -------- | ---------------------- | --------------- | ----------------------------------- |
-| api      | `src/main-api.ts`      | `PORT_API`      | REST API                            |
-| realtime | `src/main-realtime.ts` | `PORT_REALTIME` | Socket.IO (starts empty; Phase 3)   |
-| worker   | `src/main-worker.ts`   | nothing         | BullMQ jobs (starts empty; Phase 2) |
+| Process  | Entry point            | Listens on      | Purpose                              |
+| -------- | ---------------------- | --------------- | ------------------------------------ |
+| api      | `src/main-api.ts`      | `PORT_API`      | REST API                             |
+| realtime | `src/main-realtime.ts` | `PORT_REALTIME` | Socket.IO (starts empty; Phase 3)    |
+| worker   | `src/main-worker.ts`   | nothing         | BullMQ: hourly refresh-token cleanup |
 
 All three share one image and one `CoreModule` (config, logger, Postgres, Redis, global error filter).
 
@@ -26,6 +26,7 @@ All three share one image and one `CoreModule` (config, logger, Postgres, Redis,
 ```sh
 npm ci --ignore-scripts          # lockfile only; no dependency may run install scripts
 cp .env.example .env             # then replace every CHANGE_ME (use hex: values go into URLs)
+node scripts/gen-jwt-key.mjs     # a local JWT signing key goes into .env (never printed)
 npm run prisma:generate
 npm run typecheck && npm run lint && npm test
 ```
@@ -69,19 +70,26 @@ npm run dev:worker
 | `contracts:types`                         | Regenerate `src/generated/openapi.ts` from `contracts/openapi.yaml`                               |
 | `contracts:check`                         | Same, then fail if the committed file changed (CI runs this)                                      |
 
+Helper scripts (Node built-ins only): `node scripts/gen-jwt-key.mjs` (local signing key; `--add --kid <id>` rehearses a key rotation) and `node scripts/smoke-auth.mjs <base url>` (end-to-end check of a running server).
+
 ## Configuration
 
 Every variable is validated by a zod schema at startup ([`src/common/config/config.schema.ts`](src/common/config/config.schema.ts)). If one is missing or invalid the process exits non-zero and prints **names and problem codes only, never values**. `.env.example` lists them all.
 
-| Variable                    | Required | Notes                                                                   |
-| --------------------------- | -------- | ----------------------------------------------------------------------- |
-| `NODE_ENV`                  | yes      | `development` \| `test` \| `production`                                 |
-| `PORT_API`, `PORT_REALTIME` | yes      | 1–65535                                                                 |
-| `DATABASE_URL`, `REDIS_URL` | yes      | `postgres(ql)://`, `redis(s)://`                                        |
-| `APP_PUBLIC_BASE_URL`       | yes      | must be `https` in production                                           |
-| `BIND_HOST`                 | no       | default `127.0.0.1`; containers use `0.0.0.0`                           |
-| `LOG_LEVEL`                 | no       | default `info`                                                          |
-| `CORS_ORIGINS`              | no       | empty = no CORS (mobile-only). Comma-separated origins; `*` is rejected |
+| Variable                                                                         | Required | Notes                                                                                                  |
+| -------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| `NODE_ENV`                                                                       | yes      | `development` \| `test` \| `production`                                                                |
+| `PORT_API`, `PORT_REALTIME`                                                      | yes      | 1–65535                                                                                                |
+| `DATABASE_URL`, `REDIS_URL`                                                      | yes      | `postgres(ql)://`, `redis(s)://`                                                                       |
+| `APP_PUBLIC_BASE_URL`                                                            | yes      | must be `https` in production                                                                          |
+| `BIND_HOST`                                                                      | no       | default `127.0.0.1`; containers use `0.0.0.0`                                                          |
+| `LOG_LEVEL`                                                                      | no       | default `info`                                                                                         |
+| `CORS_ORIGINS`                                                                   | no       | empty = no CORS (mobile-only). Comma-separated origins; `*` is rejected                                |
+| `JWT_PRIVATE_KEYS`                                                               | yes      | JSON `{ kid: PEM }` of Ed25519 keys. Local: `node scripts/gen-jwt-key.mjs`                             |
+| `JWT_ACTIVE_KID`                                                                 | yes      | the `kid` that signs new access tokens; must be a key of the map                                       |
+| `INTEGRITY_MODE`                                                                 | no       | `enforce` (default) or `bypass` (local only; **refused in production**)                                |
+| `INTEGRITY_PACKAGE_NAME`, `INTEGRITY_CERT_SHA256`, `GOOGLE_SERVICE_ACCOUNT_JSON` | enforce  | Play Integrity: app package, release certificate digest(s), Google service account                     |
+| `TRUST_PROXY`                                                                    | no       | hop count (1-10) or proxy IPs/CIDRs allowed to set `X-Forwarded-For`; default none; `true` is rejected |
 
 ## Contracts
 
@@ -97,7 +105,7 @@ Every variable is validated by a zod schema at startup ([`src/common/config/conf
 
 ## Troubleshooting
 
-- **Vitest: `Cannot read properties of undefined (reading 'config')` (Windows).** Run from a terminal whose current directory uses an **uppercase** drive letter (`C:\...`). A lowercase `c:\...` makes Node load `vitest` twice under two spellings of the same path. VS Code's integrated terminal and PowerShell normally use the uppercase form; some Git Bash `cd /c/...` sequences do not. This does not affect Linux, CI or Docker.
+- **Vitest: `Cannot read properties of undefined (reading 'config')` (Windows).** Run from a terminal whose current directory uses an **uppercase** drive letter (`C:\...`). A lowercase `c:\...` makes Node load `vitest` twice under two spellings of the same path. VS Code's integrated terminal and PowerShell normally use the uppercase form; Git Bash does not after `cd /c/...`, but `cd "C:/Users/..."` does. This does not affect Linux, CI or Docker.
 - **`prisma migrate diff` prints nothing and exits 0.** The schema engine needs a datasource even for an offline diff; set a dummy `DATABASE_URL` for that one command.
 - **`npm install` says "install scripts not covered by allowScripts".** Intended: scripts are denied in `package.json` (`allowScripts`). Nothing here needs them.
 - **gitleaks in CI.** Free for personal-account repositories. If the repo moves to a GitHub organization, add a `GITLEAKS_LICENSE` secret (see the workflow).

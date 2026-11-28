@@ -16,10 +16,25 @@ export const BODY_LIMIT_BYTES = 64 * 1024;
 
 const PROBE_PATHS: ReadonlySet<string> = new Set(['/health', '/ready']);
 
-export function createFastifyAdapter(logger: Logger): FastifyAdapter {
+/** A hop count n means "trust the n proxies closest to us" (proxy-addr semantics). */
+function toFastifyTrustProxy(
+  value: AppConfig['TRUST_PROXY'],
+): boolean | string[] | ((address: string, hop: number) => boolean) {
+  return typeof value === 'number' ? (_address, hop) => hop < value : value;
+}
+
+/**
+ * `trustProxy` says which proxies may set X-Forwarded-For (config TRUST_PROXY). Off by default:
+ * `request.ip` is then the socket address, so a client cannot pick its own IP for the rate limits.
+ */
+export function createFastifyAdapter(
+  logger: Logger,
+  options: { trustProxy?: AppConfig['TRUST_PROXY'] } = {},
+): FastifyAdapter {
   return new FastifyAdapter({
     loggerInstance: logger,
     bodyLimit: BODY_LIMIT_BYTES,
+    trustProxy: toFastifyTrustProxy(options.trustProxy ?? false),
     // Load-balancer probes would otherwise write two log lines every few seconds.
     logController: new LogController({
       disableRequestLogging: (request: { url: string }) => PROBE_PATHS.has(request.url),
@@ -75,7 +90,7 @@ export async function runHttpProcess(options: {
   try {
     const app = await NestFactory.create<NestFastifyApplication>(
       options.rootModule,
-      createFastifyAdapter(logger),
+      createFastifyAdapter(logger, { trustProxy: config.TRUST_PROXY }),
       { bufferLogs: true },
     );
     configureHttpApp(app, config, logger);
@@ -97,7 +112,7 @@ export async function runWorkerProcess(options: {
     });
     app.useLogger(new PinoNestLogger(logger));
     app.enableShutdownHooks();
-    logger.info('worker started (no queues yet)');
+    logger.info('worker started');
   } catch (error) {
     failStartup(logger, error);
   }

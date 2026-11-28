@@ -37,6 +37,15 @@ x-app: &app
     APP_PUBLIC_BASE_URL: http://localhost:${PORT_API:-3000}
     DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
     REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+    # Accounts and authentication (Phase 2). Generate the key with: node scripts/gen-jwt-key.mjs
+    JWT_PRIVATE_KEYS: ${JWT_PRIVATE_KEYS:?run node scripts/gen-jwt-key.mjs to create a local key}
+    JWT_ACTIVE_KID: ${JWT_ACTIVE_KID:?run node scripts/gen-jwt-key.mjs to create a local key}
+    # The local stack is a development environment, so it may skip Google; enforce needs the 3 values.
+    INTEGRITY_MODE: ${INTEGRITY_MODE:-bypass}
+    INTEGRITY_PACKAGE_NAME: ${INTEGRITY_PACKAGE_NAME:-}
+    INTEGRITY_CERT_SHA256: ${INTEGRITY_CERT_SHA256:-}
+    GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON:-}
+    TRUST_PROXY: ${TRUST_PROXY:-}
 
 services:
   postgres:

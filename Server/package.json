@@ -32,7 +32,11 @@
     "@nestjs/platform-fastify": "^12.6.1",
     "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.10.1",
+    "argon2": "^0.45.2",
+    "bullmq": "^6.7.10",
+    "google-auth-library": "^11.3.4",
     "ioredis": "^6.1.0",
+    "jose": "^6.2.18",
     "pg": "^8.23.1",
     "pino": "^10.4.0",
     "reflect-metadata": "^0.2.2",
@@ -73,6 +77,8 @@
     "protobufjs": false,
     "ssh2": false,
     "prisma": false,
-    "@prisma/engines": false
+    "@prisma/engines": false,
+    "argon2": false,
+    "msgpackr-extract": false
   }
 }

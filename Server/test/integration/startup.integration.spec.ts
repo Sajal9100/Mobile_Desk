@@ -1,4 +1,5 @@
 ﻿import { afterAll, describe, expect, it } from 'vitest';
+import { enforceEnv, jwtEnv } from '../helpers/test-config.js';
 import {
   getFreePort,
   runToExit,
@@ -15,6 +16,51 @@ const SECRET_REDIS_PASSWORD = 'SENTINEL_REDIS_PASSWORD_42';
 const entries: Entry[] = ['main-api.js', 'main-realtime.js', 'main-worker.js'];
 
 describe('startup refuses bad configuration (real process)', () => {
+  it.each(entries)('%s refuses INTEGRITY_MODE=bypass in production', (entry) => {
+    const { exitCode, output } = runToExit(entry, {
+      ...deadDependencies(3000),
+      NODE_ENV: 'production',
+      APP_PUBLIC_BASE_URL: 'https://api.example.app',
+      INTEGRITY_MODE: 'bypass',
+    });
+    expect(exitCode).toBe(1);
+    expect(output).toContain('INTEGRITY_MODE: bypass is not allowed when NODE_ENV=production');
+    expect(output).not.toContain(SECRET_DB_PASSWORD);
+  });
+
+  it.each(entries)(
+    '%s accepts INTEGRITY_MODE=enforce in production (only the unrelated bad port is reported)',
+    (entry) => {
+      // Prove the refusal above is about bypass and nothing else: enforce passes validation, so the
+      // process gets past config and fails (or keeps running) only for reasons unrelated to it.
+      const { output } = runToExit(entry, {
+        ...deadDependencies(3000),
+        NODE_ENV: 'production',
+        APP_PUBLIC_BASE_URL: 'https://api.example.app',
+        ...enforceEnv(),
+        PORT_API: 'not-a-port',
+      });
+      expect(output).toContain('PORT_API');
+      expect(output).not.toContain('INTEGRITY_MODE');
+    },
+  );
+
+  it.each(entries)('%s never prints a bad private key', (entry) => {
+    const secret = 'SENTINEL_PRIVATE_KEY_TEXT_88';
+    const { exitCode, output } = runToExit(entry, {
+      ...deadDependencies(3000),
+      JWT_PRIVATE_KEYS: JSON.stringify({
+        k1: `-----BEGIN PRIVATE KEY-----
+${secret}
+-----END PRIVATE KEY-----`,
+      }),
+      JWT_ACTIVE_KID: 'k1',
+    });
+    expect(exitCode).toBe(1);
+    expect(output).toContain('JWT_PRIVATE_KEYS');
+    expect(output).not.toContain(secret);
+  });
+
   it.each(entries)(
     '%s exits non-zero when DATABASE_URL is missing, printing no values',
     (entry) => {
@@ -51,6 +97,8 @@ const deadDependencies = (port: number): Record<string, string> => ({
   REDIS_URL: `redis://:${SECRET_REDIS_PASSWORD}@127.0.0.1:1/0`,
   APP_PUBLIC_BASE_URL: `http://localhost:${port}`,
   LOG_LEVEL: 'info',
+  INTEGRITY_MODE: 'bypass',
+  ...jwtEnv().env,
 });
 
 describe.each(['main-api.js', 'main-realtime.js'] as const)(

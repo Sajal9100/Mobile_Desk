@@ -4,6 +4,7 @@ import { PrismaService } from '../../common/database/prisma.service.js';
 import { AppException } from '../../common/errors/app.exception.js';
 import { LOGGER } from '../../common/logger.module.js';
 import { RedisService } from '../../common/redis/redis.service.js';
+import { withTimeout } from '../../common/with-timeout.js';
 
 export const READINESS_TIMEOUT_MS = 1_000;
 
@@ -11,19 +12,6 @@ export type ReadinessReport = {
   status: 'ok';
   checks: { database: 'ok'; redis: 'ok' };
 };
-
-/** Rejects if `work` does not settle within `ms`, and never leaves the timer running. */
-export async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
-  });
-  try {
-    return await Promise.race([work, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 @Injectable()
 export class ReadinessService {

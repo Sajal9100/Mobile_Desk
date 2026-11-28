@@ -47,7 +47,8 @@ export interface paths {
         };
         /**
          * One-time nonce for a Play Integrity request (5 min, single use).
-         * @description Rate limit 30 per minute per IP.
+         * @description Rate limit 30 per minute per IP. Each nonce is valid for 5 minutes and can be used once:
+         *     the server deletes it when it checks an integrity token, whatever the outcome.
          */
         get: operations["getIntegrityNonce"];
         put?: never;
@@ -69,8 +70,13 @@ export interface paths {
         put?: never;
         /**
          * Create an account.
-         * @description Requires a valid Play Integrity verdict. Limit 5 per hour per IP.
-         *     Planned error codes: `409 email_taken`, `503 integrity_unavailable`.
+         * @description Requires a valid Play Integrity verdict (Standard request, see `integrityNonce` below).
+         *     Limit 5 per hour per IP.
+         *
+         *     Errors: `400 validation_failed`, `403 integrity_failed` (the verdict was not acceptable),
+         *     `409 email_taken`, `429 rate_limited`, `503 integrity_unavailable` (Google could not be
+         *     reached; retry with a NEW nonce and a new token: the nonce is used up by every attempt). An account that was deleted keeps its email until the final deletion, so
+         *     registering it again returns `409 email_taken` until then.
          */
         post: operations["register"];
         delete?: never;
@@ -90,8 +96,14 @@ export interface paths {
         put?: never;
         /**
          * Sign in with email and password.
-         * @description A wrong email and a wrong password return the identical `401 invalid_credentials`.
-         *     Limits: 10 per 15 min per email, 30 per 15 min per IP.
+         * @description A wrong email, a deleted account and a wrong password return the identical
+         *     `401 invalid_credentials`. Limits: 30 per 15 min per IP, and 10 per 15 min per email. The email
+         *     limit counts only requests that passed the integrity check, so a caller without a valid
+         *     token cannot lock an account out.
+         *
+         *     Other errors: `400 validation_failed`, `403 integrity_failed`, `403 forbidden` (the
+         *     password was right but the account is suspended), `429 rate_limited`,
+         *     `503 integrity_unavailable` (retry with a NEW nonce and a new token).
          */
         post: operations["login"];
         delete?: never;
@@ -113,6 +125,11 @@ export interface paths {
          * Rotate the refresh token and get a new access token.
          * @description Reusing an already-rotated refresh token revokes the whole token family
          *     (`401 refresh_reuse_detected`). Limit 30 per 15 min per family.
+         *
+         *     Errors: `401 invalid_refresh_token` (unknown, expired, revoked, or the account is gone or
+         *     suspended), `401 refresh_reuse_detected`, `429 rate_limited`. After any `401` the app must
+         *     sign the user out: the refresh token cannot be used again. The family expires 30 days after
+         *     login, whatever the activity, so a rotated token keeps the original expiry.
          */
         post: operations["refreshTokens"];
         delete?: never;
@@ -130,7 +147,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Revoke the refresh-token family of the presented token. */
+        /**
+         * Revoke the refresh-token family of the presented token.
+         * @description Always `204`, also for an unknown or already revoked token, so it reveals nothing.
+         */
         post: operations["logout"];
         delete?: never;
         options?: never;
@@ -167,7 +187,11 @@ export interface paths {
         post?: never;
         /**
          * Delete the account (soft delete now; hard delete after 30 days, Phase 6).
-         * @description Revokes all refresh-token families and disconnects all sockets.
+         * @description Revokes all refresh-token families and disconnects all sockets. The email stays reserved
+         *     until the final deletion.
+         *
+         *     A wrong password returns `401 invalid_credentials` (not `unauthorized`): the app must
+         *     refresh its tokens only on the code `unauthorized`. Limit 5 per 15 min per user.
          */
         delete: operations["deleteAccount"];
         options?: never;
@@ -650,9 +674,13 @@ export interface components {
          *     server today (`src/common/errors/codes.ts`; a unit test keeps this list identical).
          *     Later phases add more codes (see `x-planned-codes`); the app must treat unknown codes as
          *     a generic error for the HTTP status.
+         *
+         *     Phase 2 codes: `email_taken` (409), `invalid_credentials` (401), `invalid_refresh_token`
+         *     (401), `refresh_reuse_detected` (401), `integrity_failed` (403), `integrity_unavailable`
+         *     (503, retryable).
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "unauthorized" | "forbidden" | "not_found" | "rate_limited" | "conflict" | "internal_error" | "service_unavailable" | "payload_too_large";
+        ErrorCode: "validation_failed" | "unauthorized" | "forbidden" | "not_found" | "rate_limited" | "conflict" | "internal_error" | "service_unavailable" | "payload_too_large" | "email_taken" | "invalid_credentials" | "invalid_refresh_token" | "refresh_reuse_detected" | "integrity_failed" | "integrity_unavailable";
         Error: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -681,7 +709,7 @@ export interface components {
         /** Format: date-time */
         Timestamp: string;
         IntegrityNonce: {
-            /** @description 32 random bytes, base64url */
+            /** @description 32 random bytes, base64url (43 characters) */
             nonce: string;
         };
         User: {
@@ -703,20 +731,38 @@ export interface components {
             refreshToken: string;
         };
         RegisterRequest: {
+            /** @description Trimmed; no control characters. */
             displayName: string;
-            /** Format: email */
+            /**
+             * Format: email
+             * @description Trimmed and lower-cased by the server; stored and compared in that form.
+             */
             email: string;
             /** @description At least one letter and one digit. */
             password: string;
-            /** @description Play Integrity token bound to a nonce from /api/integrity/nonce. */
-            integrityToken: string;
+            integrityToken: components["schemas"]["IntegrityToken"];
+            integrityNonce: components["schemas"]["IntegrityNonceValue"];
         };
         LoginRequest: {
             /** Format: email */
             email: string;
             password: string;
-            integrityToken: string;
+            integrityToken: components["schemas"]["IntegrityToken"];
+            integrityNonce: components["schemas"]["IntegrityNonceValue"];
         };
+        /**
+         * @description Play Integrity **Standard** token. Request it with
+         *     `requestHash = base64url(SHA-256(UTF-8("<action>|<nonce>|<email>")))`, where `<action>` is
+         *     `register` or `login`, `<nonce>` is `integrityNonce` and `<email>` is the email as the
+         *     server normalises it (trimmed, lower-cased). The password is never part of the hash.
+         *     Test vector: action `register`, nonce `AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`
+         *     (43 times `A`), email `user@example.com` gives
+         *     `1ftE21j4RseCyTklF7PYAQ5mscwuu7E2CQDkplO1OtU`; the same with `login` gives
+         *     `TdlQZYcwjiwPS3UE_HdcbtzOrdL32pKvh3x4kF3ppSM`.
+         */
+        IntegrityToken: string;
+        /** @description The nonce from `GET /api/integrity/nonce` that went into the requestHash. Single use. */
+        IntegrityNonceValue: string;
         RefreshRequest: {
             refreshToken: string;
         };
@@ -880,6 +926,18 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /**
+         * @description The request is understood but refused: `integrity_failed` (the Play Integrity verdict was
+         *     not acceptable) or `forbidden` (for example a suspended account).
+         */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description The resource does not exist, or the caller may not know that it does. */
         NotFound: {
             headers: {
@@ -1019,6 +1077,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["ValidationFailed"];
+            403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
             429: components["responses"]["RateLimited"];
             503: components["responses"]["ServiceUnavailable"];
@@ -1048,6 +1107,7 @@ export interface operations {
             };
             400: components["responses"]["ValidationFailed"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             503: components["responses"]["ServiceUnavailable"];
         };
@@ -1147,6 +1207,7 @@ export interface operations {
             };
             400: components["responses"]["ValidationFailed"];
             401: components["responses"]["Unauthorized"];
+            429: components["responses"]["RateLimited"];
         };
     };
     exportAccount: {
