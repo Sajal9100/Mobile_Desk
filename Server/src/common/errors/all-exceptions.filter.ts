@@ -61,28 +61,75 @@ function hasStatusCode(error: unknown): error is { statusCode: number } {
   );
 }
 
-/** Prisma codes that mean "the database cannot be reached or is overloaded" (not a bug in a query). */
-const DATABASE_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
+/**
+ * Error codes that mean "a dependency (almost always Postgres) cannot be reached or is overloaded",
+ * as opposed to a bug in a query. Found by stopping a real Postgres under Prisma 7 + the pg adapter:
+ * a server that was never reachable gives a Prisma code (P1001), but one that WAS connected and
+ * then went away surfaces the raw socket code (ECONNREFUSED, also inside an AggregateError).
+ */
+const DEPENDENCY_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
+  // Prisma
   'P1001', // cannot reach the server
   'P1002', // timed out reaching the server
   'P1008', // operation timed out
   'P1017', // server closed the connection
   'P2024', // timed out getting a connection from the pool
+  // Node network errors surfaced by the driver
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EPIPE',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  // PostgreSQL: admin shutdown, crash shutdown, cannot connect now, too many connections,
+  // connection exceptions
+  '57P01',
+  '57P02',
+  '57P03',
+  '53300',
+  '08000',
+  '08001',
+  '08003',
+  '08006',
 ]);
 
 /**
- * Fail closed (rule 9): when Postgres is down the caller gets a retryable 503, not a bare 500 that
- * looks like a bug. Matched by name so this file does not depend on the generated client.
+ * Messages of the pg driver / pool for a connection that died or could not be made. They carry no
+ * error code: a pooled connection killed by a stopping server surfaces as a plain
+ * `Error("Connection terminated unexpectedly")` (seen with the real driver). Only used to choose
+ * 503 over 500; the message itself is never sent to the client.
  */
-function isDatabaseUnavailable(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const { name, code } = error as { name?: unknown; code?: unknown };
+const DEPENDENCY_UNAVAILABLE_MESSAGES: readonly string[] = [
+  'Connection terminated', // "...unexpectedly" and "...due to connection timeout"
+  'timeout exceeded when trying to connect',
+  'Client has encountered a connection error',
+  "Can't reach database server",
+];
+
+/**
+ * Fail closed (rule 9): when Postgres (or Redis) is down the caller gets a retryable 503, not a bare
+ * 500 that looks like a bug. Matched by name, code and driver message, so this file does not depend
+ * on the generated client. A wrapped error is followed through `cause` (a few levels at most).
+ */
+function isDependencyUnavailable(error: unknown, depth = 0): boolean {
+  if (typeof error !== 'object' || error === null || depth > 3) return false;
+  const { name, code, message, cause } = error as {
+    name?: unknown;
+    code?: unknown;
+    message?: unknown;
+    cause?: unknown;
+  };
   if (name === 'PrismaClientInitializationError') return true;
-  return (
-    name === 'PrismaClientKnownRequestError' &&
-    typeof code === 'string' &&
-    DATABASE_UNAVAILABLE_CODES.has(code)
-  );
+  if (typeof code === 'string' && DEPENDENCY_UNAVAILABLE_CODES.has(code)) return true;
+  if (
+    typeof message === 'string' &&
+    DEPENDENCY_UNAVAILABLE_MESSAGES.some((fragment) => message.includes(fragment))
+  ) {
+    return true;
+  }
+  return isDependencyUnavailable(cause, depth + 1);
 }
 
 export function toApiError(exception: unknown): ApiError {
@@ -102,7 +149,7 @@ export function toApiError(exception: unknown): ApiError {
   if (hasStatusCode(exception)) {
     return fromStatus(exception.statusCode);
   }
-  if (isDatabaseUnavailable(exception)) {
+  if (isDependencyUnavailable(exception)) {
     return fromStatus(503);
   }
   return INTERNAL_ERROR;

@@ -1,80 +1,9 @@
-import { execFileSync } from 'node:child_process';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
-import { Test } from '@nestjs/testing';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AppModule } from '../../src/app.module.js';
-import { configureHttpApp, createFastifyAdapter } from '../../src/bootstrap.js';
-import { setRuntimeConfig } from '../../src/common/config/config.service.js';
-import { parseConfig } from '../../src/common/config/load-config.js';
-import { PrismaService } from '../../src/common/database/prisma.service.js';
-import { getRootLogger } from '../../src/common/logger.module.js';
-import { jwtEnv } from '../helpers/test-config.js';
+import { waitFor, startStack, stopStack, type Stack } from './helpers/stack.js';
 
 // Needs Docker. Each describe block gets its own Postgres 16 + Redis 7 so one scenario cannot
 // affect another.
-
-const REDIS_PASSWORD = 'test-redis-password';
-
-type Stack = {
-  postgres: StartedPostgreSqlContainer;
-  redis: StartedRedisContainer;
-  app: NestFastifyApplication;
-};
-
-/** Applies prisma/migrations with the real Prisma CLI, exactly as `npm run prisma:deploy` does. */
-function migrate(databaseUrl: string): void {
-  const prismaCli = join(
-    dirname(createRequire(import.meta.url).resolve('prisma/package.json')),
-    'build',
-    'index.js',
-  );
-  execFileSync(process.execPath, [prismaCli, 'migrate', 'deploy'], {
-    env: { ...process.env, DATABASE_URL: databaseUrl },
-    stdio: 'pipe',
-  });
-}
-
-async function startStack(): Promise<Stack> {
-  const [postgres, redis] = await Promise.all([
-    new PostgreSqlContainer('postgres:16').start(),
-    new RedisContainer('redis:7').withPassword(REDIS_PASSWORD).start(),
-  ]);
-
-  migrate(postgres.getConnectionUri());
-
-  const parsed = parseConfig({
-    NODE_ENV: 'test',
-    PORT_API: '3000',
-    PORT_REALTIME: '3001',
-    DATABASE_URL: postgres.getConnectionUri(),
-    REDIS_URL: redis.getConnectionUrl(),
-    LOG_LEVEL: 'silent',
-    APP_PUBLIC_BASE_URL: 'http://localhost:3000',
-    INTEGRITY_MODE: 'bypass',
-    ...jwtEnv().env,
-  });
-  if (!parsed.ok) throw new Error('test configuration is invalid');
-  setRuntimeConfig(parsed.config);
-
-  const logger = getRootLogger('test');
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-  const app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(logger));
-  configureHttpApp(app, parsed.config, logger);
-  await app.init();
-  await app.getHttpAdapter().getInstance().ready();
-  return { postgres, redis, app };
-}
-
-async function stopStack(stack: Stack | undefined): Promise<void> {
-  if (stack === undefined) return;
-  await stack.app.close();
-  await Promise.allSettled([stack.postgres.stop(), stack.redis.stop()]);
-}
 
 async function ready(app: NestFastifyApplication) {
   const res = await app.inject({ method: 'GET', url: '/ready' });
@@ -82,14 +11,11 @@ async function ready(app: NestFastifyApplication) {
 }
 
 /** Polls /ready until it returns `status` (a stopped container needs a moment to be noticed). */
-async function waitForStatus(app: NestFastifyApplication, status: number, timeoutMs = 10_000) {
-  const deadline = Date.now() + timeoutMs;
-  let last = await ready(app);
-  while (last.status !== status && Date.now() < deadline) {
-    await delay(250);
-    last = await ready(app);
-  }
-  return last;
+function waitForStatus(app: NestFastifyApplication, status: number) {
+  return waitFor(
+    () => ready(app),
+    (result) => result.status === status,
+  );
 }
 
 describe('GET /health and /ready with real Postgres and Redis', () => {
@@ -101,23 +27,39 @@ describe('GET /health and /ready with real Postgres and Redis', () => {
     await stopStack(stack);
   });
 
-  it('/health is 200', async () => {
+  it('/health is 200 without a token', async () => {
     const res = await stack?.app.inject({ method: 'GET', url: '/health' });
     expect(res?.statusCode).toBe(200);
     expect(res?.json()).toEqual({ status: 'ok' });
   });
 
-  it('/ready is 200 when both dependencies are up', async () => {
+  it('/ready is 200 without a token when both dependencies are up', async () => {
     const result = await ready(stack!.app);
     expect(result.status).toBe(200);
     expect(result.body).toEqual({ status: 'ok', checks: { database: 'ok', redis: 'ok' } });
   });
 
-  it('the init migration created app_meta', async () => {
-    const prisma = stack!.app.get(PrismaService);
-    const rows = await prisma.$queryRaw<{ name: string | null }[]>`
-      SELECT to_regclass('public.app_meta')::text AS name`;
-    expect(rows[0]?.name).toBe('app_meta');
+  it('the migrations created app_meta and the Phase 2 tables', async () => {
+    const rows = await stack!.prisma.$queryRaw<{ name: string }[]>`
+      SELECT table_name AS name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name <> '_prisma_migrations'
+       ORDER BY table_name`;
+    expect(rows.map((row) => row.name)).toEqual([
+      'app_meta',
+      'refresh_tokens',
+      'user_settings',
+      'users',
+    ]);
+  });
+
+  it('the database refuses an email that is not trimmed and lower-cased', async () => {
+    const insert = (email: string) =>
+      stack!.prisma.$executeRaw`
+        INSERT INTO users (id, email, password_hash, display_name)
+        VALUES (gen_random_uuid(), ${email}, 'x', 'Check')`;
+    await expect(insert('Upper@Example.com')).rejects.toThrow();
+    await expect(insert(' padded@example.com ')).rejects.toThrow();
+    await expect(insert('fine@example.com')).resolves.toBe(1);
   });
 });
 
