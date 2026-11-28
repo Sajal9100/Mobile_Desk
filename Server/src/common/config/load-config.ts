@@ -18,8 +18,12 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): ParseConfigRe
   const issues = parsed.error.issues.map((issue): ConfigIssue => {
     const variable = typeof issue.path[0] === 'string' ? issue.path[0] : '(config)';
     // Zod reports an unset enum as invalid_value and an unset string as invalid_type; to the operator
-    // both are simply "missing".
-    return { variable, problem: env[variable] === undefined ? 'missing' : issue.code };
+    // both are simply "missing" (an empty value counts as unset: Compose passes those through).
+    // A `custom` issue carries a fixed message written in config.schema.ts (never a value), which
+    // says more than the bare code; every other issue is reported by its code only.
+    const unset = env[variable] === undefined || env[variable] === '';
+    const problem = unset ? 'missing' : issue.code === 'custom' ? issue.message : issue.code;
+    return { variable, problem };
   });
   return { ok: false, issues };
 }

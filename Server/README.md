@@ -73,15 +73,20 @@ npm run dev:worker
 
 Every variable is validated by a zod schema at startup ([`src/common/config/config.schema.ts`](src/common/config/config.schema.ts)). If one is missing or invalid the process exits non-zero and prints **names and problem codes only, never values**. `.env.example` lists them all.
 
-| Variable                    | Required | Notes                                                                   |
-| --------------------------- | -------- | ----------------------------------------------------------------------- |
-| `NODE_ENV`                  | yes      | `development` \| `test` \| `production`                                 |
-| `PORT_API`, `PORT_REALTIME` | yes      | 1–65535                                                                 |
-| `DATABASE_URL`, `REDIS_URL` | yes      | `postgres(ql)://`, `redis(s)://`                                        |
-| `APP_PUBLIC_BASE_URL`       | yes      | must be `https` in production                                           |
-| `BIND_HOST`                 | no       | default `127.0.0.1`; containers use `0.0.0.0`                           |
-| `LOG_LEVEL`                 | no       | default `info`                                                          |
-| `CORS_ORIGINS`              | no       | empty = no CORS (mobile-only). Comma-separated origins; `*` is rejected |
+| Variable                                                                         | Required | Notes                                                                                                  |
+| -------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| `NODE_ENV`                                                                       | yes      | `development` \| `test` \| `production`                                                                |
+| `PORT_API`, `PORT_REALTIME`                                                      | yes      | 1–65535                                                                                                |
+| `DATABASE_URL`, `REDIS_URL`                                                      | yes      | `postgres(ql)://`, `redis(s)://`                                                                       |
+| `APP_PUBLIC_BASE_URL`                                                            | yes      | must be `https` in production                                                                          |
+| `BIND_HOST`                                                                      | no       | default `127.0.0.1`; containers use `0.0.0.0`                                                          |
+| `LOG_LEVEL`                                                                      | no       | default `info`                                                                                         |
+| `CORS_ORIGINS`                                                                   | no       | empty = no CORS (mobile-only). Comma-separated origins; `*` is rejected                                |
+| `JWT_PRIVATE_KEYS`                                                               | yes      | JSON `{ kid: PEM }` of Ed25519 keys. Local: `node scripts/gen-jwt-key.mjs`                             |
+| `JWT_ACTIVE_KID`                                                                 | yes      | the `kid` that signs new access tokens; must be a key of the map                                       |
+| `INTEGRITY_MODE`                                                                 | no       | `enforce` (default) or `bypass` (local only; **refused in production**)                                |
+| `INTEGRITY_PACKAGE_NAME`, `INTEGRITY_CERT_SHA256`, `GOOGLE_SERVICE_ACCOUNT_JSON` | enforce  | Play Integrity: app package, release certificate digest(s), Google service account                     |
+| `TRUST_PROXY`                                                                    | no       | hop count (1-10) or proxy IPs/CIDRs allowed to set `X-Forwarded-For`; default none; `true` is rejected |
 
 ## Contracts
 

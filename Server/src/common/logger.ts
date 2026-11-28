@@ -19,6 +19,16 @@ export const SENSITIVE_KEYS = [
   'integrityToken',
   'pin',
   'authorization',
+  // Phase 2: accounts and authentication
+  'email',
+  'passwordHash',
+  'tokenHash',
+  'nonce',
+  'integrityNonce',
+  'privateKey',
+  'private_key',
+  'JWT_PRIVATE_KEYS',
+  'GOOGLE_SERVICE_ACCOUNT_JSON',
 ] as const;
 
 export const REDACT_CENSOR = '[REDACTED]';

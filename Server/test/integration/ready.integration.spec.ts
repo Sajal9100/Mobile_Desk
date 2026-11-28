@@ -13,6 +13,7 @@ import { setRuntimeConfig } from '../../src/common/config/config.service.js';
 import { parseConfig } from '../../src/common/config/load-config.js';
 import { PrismaService } from '../../src/common/database/prisma.service.js';
 import { getRootLogger } from '../../src/common/logger.module.js';
+import { jwtEnv } from '../helpers/test-config.js';
 
 // Needs Docker. Each describe block gets its own Postgres 16 + Redis 7 so one scenario cannot
 // affect another.
@@ -54,6 +55,8 @@ async function startStack(): Promise<Stack> {
     REDIS_URL: redis.getConnectionUrl(),
     LOG_LEVEL: 'silent',
     APP_PUBLIC_BASE_URL: 'http://localhost:3000',
+    INTEGRITY_MODE: 'bypass',
+    ...jwtEnv().env,
   });
   if (!parsed.ok) throw new Error('test configuration is invalid');
   setRuntimeConfig(parsed.config);
