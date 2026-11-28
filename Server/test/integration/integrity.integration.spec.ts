@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { sha256Hex } from '../../src/common/crypto.js';
 import { AppException } from '../../src/common/errors/app.exception.js';
 import type {
   DecodeResult,
@@ -426,6 +427,32 @@ describe('Play Integrity in enforce mode (Google mocked)', () => {
       const response = await attemptLogin(email, 'wrong-password-1');
       expect(response.status).toBe(401);
       expect(errorOf(response).code).toBe('invalid_credentials');
+    });
+
+    it('junk requests cannot lock an account: only requests that PASS the integrity check count against the per-email limit', async () => {
+      const { email } = await attemptRegister();
+      const emailKey = `rl:login:email:${sha256Hex(email)}`;
+
+      // Someone who knows the address but has no attested device: more than the 10 allowed attempts.
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const response = await attemptLogin(email, 'guess-password-1', {
+          requestPackageName: 'com.evil.repack',
+        });
+        expect(response.status, `junk attempt ${attempt + 1}`).toBe(403);
+      }
+      expect(await stack.redisClient.exists(emailKey)).toBe(0);
+
+      // The real owner signs in without trouble.
+      expect((await attemptLogin(email, DEFAULT_PASSWORD)).status).toBe(200);
+
+      // Requests that do pass the check DO count: ten wrong guesses lock the account for everyone.
+      const target = (await attemptRegister()).email;
+      for (let attempt = 1; attempt <= 10; attempt++) {
+        expect((await attemptLogin(target, 'wrong-password-1')).status).toBe(401);
+      }
+      const locked = await attemptLogin(target, DEFAULT_PASSWORD);
+      expect(locked.status).toBe(429);
+      expect(errorOf(locked).code).toBe('rate_limited');
     });
   });
 

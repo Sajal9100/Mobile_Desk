@@ -97,7 +97,9 @@ export interface paths {
         /**
          * Sign in with email and password.
          * @description A wrong email, a deleted account and a wrong password return the identical
-         *     `401 invalid_credentials`. Limits: 10 per 15 min per email, 30 per 15 min per IP.
+         *     `401 invalid_credentials`. Limits: 30 per 15 min per IP, and 10 per 15 min per email. The email
+         *     limit counts only requests that passed the integrity check, so a caller without a valid
+         *     token cannot lock an account out.
          *
          *     Other errors: `400 validation_failed`, `403 integrity_failed`, `403 forbidden` (the
          *     password was right but the account is suspended), `429 rate_limited`,

@@ -78,14 +78,17 @@ export class AuthService {
 
   async login(body: LoginBody, ip: string): Promise<AuthResponse> {
     await this.rateLimit.consume('login:ip', ip, 30, FIFTEEN_MINUTES);
-    // The email is hashed so the address never appears in a Redis key.
-    await this.rateLimit.consume('login:email', sha256Hex(body.email), 10, FIFTEEN_MINUTES);
     await this.integrity.require({
       action: 'login',
       nonce: body.integrityNonce,
       token: body.integrityToken,
       email: body.email,
     });
+    // The per-email limit is counted only AFTER the integrity check passed. Counted before it,
+    // anyone who knows an address could lock that user out for 15 minutes with ten junk requests.
+    // Password guessing is not weakened: a guess needs a valid verdict and a fresh nonce first.
+    // The email is hashed so the address never appears in a Redis key.
+    await this.rateLimit.consume('login:email', sha256Hex(body.email), 10, FIFTEEN_MINUTES);
 
     const user = await this.prisma.user.findUnique({
       where: { email: body.email },
