@@ -117,11 +117,23 @@ describe('openapi.yaml', () => {
     }
   });
 
-  it('only /health and /ready are implemented in Phase 0', () => {
+  it('exactly the Phase 0 and Phase 2 operations are implemented', () => {
     const implemented = operations()
       .filter(({ op }) => op['x-status'] === 'implemented')
-      .map(({ path }) => path);
-    expect(implemented.sort()).toEqual(['/health', '/ready']);
+      .map(({ method, path }) => `${method} ${path}`);
+    expect(implemented.sort()).toEqual(
+      [
+        'GET /health',
+        'GET /ready',
+        'GET /api/integrity/nonce',
+        'POST /api/auth/register',
+        'POST /api/auth/login',
+        'POST /api/auth/refresh',
+        'POST /api/auth/logout',
+        'GET /api/me',
+        'DELETE /api/account',
+      ].sort(),
+    );
   });
 
   it('every operation has a unique operationId', () => {

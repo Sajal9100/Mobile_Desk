@@ -2,10 +2,10 @@ openapi: 3.1.0
 
 info:
   title: MobileDesk API
-  version: 0.1.0-draft
+  version: 0.2.0
   summary: REST API of the MobileDesk server (account, devices, sessions, WebRTC config).
   description: |
-    **Draft contract, Phase 0.** Source of truth for the app team; the app generates its types from
+    **Contract, Phase 2 (accounts and authentication) implemented.** Source of truth for the app team; the app generates its types from
     this file (`openapi-typescript`). Server code follows this file, not the other way round.
 
     Status markers on every operation:
@@ -91,9 +91,11 @@ paths:
       tags: [auth]
       operationId: getIntegrityNonce
       summary: One-time nonce for a Play Integrity request (5 min, single use).
-      description: Rate limit 30 per minute per IP.
+      description: |
+        Rate limit 30 per minute per IP. Each nonce is valid for 5 minutes and can be used once:
+        the server deletes it when it checks an integrity token, whatever the outcome.
       security: []
-      x-status: planned
+      x-status: implemented
       x-phase: 2
       responses:
         '200':
@@ -109,10 +111,15 @@ paths:
       operationId: register
       summary: Create an account.
       description: |
-        Requires a valid Play Integrity verdict. Limit 5 per hour per IP.
-        Planned error codes: `409 email_taken`, `503 integrity_unavailable`.
+        Requires a valid Play Integrity verdict (Standard request, see `integrityNonce` below).
+        Limit 5 per hour per IP.
+
+        Errors: `400 validation_failed`, `403 integrity_failed` (the verdict was not acceptable),
+        `409 email_taken`, `429 rate_limited`, `503 integrity_unavailable` (Google could not be
+        reached; retry). An account that was deleted keeps its email until the final deletion, so
+        registering it again returns `409 email_taken` until then.
       security: []
-      x-status: planned
+      x-status: implemented
       x-phase: 2
       requestBody:
         required: true
@@ -126,6 +133,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AuthResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -136,10 +144,14 @@ paths:
       operationId: login
       summary: Sign in with email and password.
       description: |
-        A wrong email and a wrong password return the identical `401 invalid_credentials`.
-        Limits: 10 per 15 min per email, 30 per 15 min per IP.
+        A wrong email, a deleted account and a wrong password return the identical
+        `401 invalid_credentials`. Limits: 10 per 15 min per email, 30 per 15 min per IP.
+
+        Other errors: `400 validation_failed`, `403 integrity_failed`, `403 forbidden` (the
+        password was right but the account is suspended), `429 rate_limited`,
+        `503 integrity_unavailable` (retry).
       security: []
-      x-status: planned
+      x-status: implemented
       x-phase: 2
       requestBody:
         required: true
@@ -154,6 +166,7 @@ paths:
               schema: { $ref: '#/components/schemas/AuthResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -165,8 +178,13 @@ paths:
       description: |
         Reusing an already-rotated refresh token revokes the whole token family
         (`401 refresh_reuse_detected`). Limit 30 per 15 min per family.
+
+        Errors: `401 invalid_refresh_token` (unknown, expired, revoked, or the account is gone or
+        suspended), `401 refresh_reuse_detected`, `429 rate_limited`. After any `401` the app must
+        sign the user out: the refresh token cannot be used again. The family expires 30 days after
+        login, whatever the activity, so a rotated token keeps the original expiry.
       security: []
-      x-status: planned
+      x-status: implemented
       x-phase: 2
       requestBody:
         required: true
@@ -188,8 +206,9 @@ paths:
       tags: [auth]
       operationId: logout
       summary: Revoke the refresh-token family of the presented token.
+      description: Always `204`, also for an unknown or already revoked token, so it reveals nothing.
       security: []
-      x-status: planned
+      x-status: implemented
       x-phase: 2
       requestBody:
         required: true
@@ -205,7 +224,7 @@ paths:
       tags: [account]
       operationId: getMe
       summary: The signed-in user.
-      x-status: planned
+      x-status: implemented
       x-phase: 2
       responses:
         '200':
@@ -225,8 +244,13 @@ paths:
       tags: [account]
       operationId: deleteAccount
       summary: Delete the account (soft delete now; hard delete after 30 days, Phase 6).
-      description: Revokes all refresh-token families and disconnects all sockets.
-      x-status: planned
+      description: |
+        Revokes all refresh-token families and disconnects all sockets. The email stays reserved
+        until the final deletion.
+
+        A wrong password returns `401 invalid_credentials` (not `unauthorized`): the app must
+        refresh its tokens only on the code `unauthorized`. Limit 5 per 15 min per user.
+      x-status: implemented
       x-phase: 2
       requestBody:
         required: true
@@ -237,6 +261,7 @@ paths:
         '204': { description: Account deleted }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
 
   /api/account/export:
     get:
@@ -820,6 +845,13 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: |
+        The request is understood but refused: `integrity_failed` (the Play Integrity verdict was
+        not acceptable) or `forbidden` (for example a suspended account).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     NotFound:
       description: The resource does not exist, or the caller may not know that it does.
       content:
@@ -858,6 +890,10 @@ components:
         server today (`src/common/errors/codes.ts`; a unit test keeps this list identical).
         Later phases add more codes (see `x-planned-codes`); the app must treat unknown codes as
         a generic error for the HTTP status.
+
+        Phase 2 codes: `email_taken` (409), `invalid_credentials` (401), `invalid_refresh_token`
+        (401), `refresh_reuse_detected` (401), `integrity_failed` (403), `integrity_unavailable`
+        (503, retryable).
       enum:
         - validation_failed
         - unauthorized
@@ -868,15 +904,13 @@ components:
         - internal_error
         - service_unavailable
         - payload_too_large
+        - email_taken
+        - invalid_credentials
+        - invalid_refresh_token
+        - refresh_reuse_detected
+        - integrity_failed
+        - integrity_unavailable
       x-planned-codes:
-        phase-2:
-          [
-            email_taken,
-            invalid_credentials,
-            invalid_refresh_token,
-            refresh_reuse_detected,
-            integrity_unavailable,
-          ]
         phase-4: [invalid_session_state, device_not_found, target_busy, device_offline]
     Error:
       type: object
@@ -927,7 +961,12 @@ components:
       additionalProperties: false
       required: [nonce]
       properties:
-        nonce: { type: string, description: '32 random bytes, base64url' }
+        nonce:
+          {
+            type: string,
+            pattern: '^[A-Za-z0-9_-]{43}$',
+            description: '32 random bytes, base64url (43 characters)',
+          }
     User:
       type: object
       additionalProperties: false
@@ -959,10 +998,22 @@ components:
     RegisterRequest:
       type: object
       additionalProperties: false
-      required: [displayName, email, password, integrityToken]
+      required: [displayName, email, password, integrityToken, integrityNonce]
       properties:
-        displayName: { type: string, minLength: 2, maxLength: 50 }
-        email: { type: string, format: email, maxLength: 254 }
+        displayName:
+          {
+            type: string,
+            minLength: 2,
+            maxLength: 50,
+            description: Trimmed; no control characters.,
+          }
+        email:
+          {
+            type: string,
+            format: email,
+            maxLength: 254,
+            description: Trimmed and lower-cased by the server; stored and compared in that form.,
+          }
         password:
           {
             type: string,
@@ -970,25 +1021,40 @@ components:
             maxLength: 128,
             description: At least one letter and one digit.,
           }
-        integrityToken:
-          {
-            type: string,
-            description: Play Integrity token bound to a nonce from /api/integrity/nonce.,
-          }
+        integrityToken: { $ref: '#/components/schemas/IntegrityToken' }
+        integrityNonce: { $ref: '#/components/schemas/IntegrityNonceValue' }
     LoginRequest:
       type: object
       additionalProperties: false
-      required: [email, password, integrityToken]
+      required: [email, password, integrityToken, integrityNonce]
       properties:
         email: { type: string, format: email, maxLength: 254 }
         password: { type: string, minLength: 1, maxLength: 128 }
-        integrityToken: { type: string }
+        integrityToken: { $ref: '#/components/schemas/IntegrityToken' }
+        integrityNonce: { $ref: '#/components/schemas/IntegrityNonceValue' }
+    IntegrityToken:
+      type: string
+      minLength: 1
+      maxLength: 16384
+      description: |
+        Play Integrity **Standard** token. Request it with
+        `requestHash = base64url(SHA-256(UTF-8("<action>|<nonce>|<email>")))`, where `<action>` is
+        `register` or `login`, `<nonce>` is `integrityNonce` and `<email>` is the email as the
+        server normalises it (trimmed, lower-cased). The password is never part of the hash.
+        Test vector: action `register`, nonce `AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`
+        (43 times `A`), email `user@example.com` gives
+        `1ftE21j4RseCyTklF7PYAQ5mscwuu7E2CQDkplO1OtU`; the same with `login` gives
+        `TdlQZYcwjiwPS3UE_HdcbtzOrdL32pKvh3x4kF3ppSM`.
+    IntegrityNonceValue:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{43}$'
+      description: The nonce from `GET /api/integrity/nonce` that went into the requestHash. Single use.
     RefreshRequest:
       type: object
       additionalProperties: false
       required: [refreshToken]
       properties:
-        refreshToken: { type: string }
+        refreshToken: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
     DeleteAccountRequest:
       type: object
       additionalProperties: false

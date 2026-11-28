@@ -44,4 +44,38 @@ export class AppException extends Error {
   static serviceUnavailable(message = 'Service temporarily unavailable'): AppException {
     return new AppException('service_unavailable', 503, message);
   }
+
+  // ---- Phase 2 (accounts and authentication)
+
+  static emailTaken(message = 'This email address is already registered'): AppException {
+    return new AppException('email_taken', 409, message);
+  }
+
+  /** One message for a wrong email, a deleted account and a wrong password: never say which. */
+  static invalidCredentials(message = 'Email or password is incorrect'): AppException {
+    return new AppException('invalid_credentials', 401, message);
+  }
+
+  static invalidRefreshToken(message = 'The refresh token is not valid'): AppException {
+    return new AppException('invalid_refresh_token', 401, message);
+  }
+
+  static refreshReuseDetected(
+    message = 'The refresh token was already used; sign in again',
+  ): AppException {
+    return new AppException('refresh_reuse_detected', 401, message);
+  }
+
+  /** The Play Integrity verdict was not acceptable. The reasons go to the audit log, not the client. */
+  static integrityFailed(message = 'Device or app integrity check failed'): AppException {
+    return new AppException('integrity_failed', 403, message);
+  }
+
+  /** Google could not be reached or answered with an error: fail closed, the client may retry. */
+  static integrityUnavailable(
+    retryAfterSeconds = 5,
+    message = 'Integrity check is temporarily unavailable',
+  ): AppException {
+    return new AppException('integrity_unavailable', 503, message, retryAfterSeconds);
+  }
 }
