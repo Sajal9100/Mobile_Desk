@@ -2,20 +2,21 @@
 
 ```text
 PHASE: 0 — Foundation
-STATUS: Partial — code, tests, contracts and the Docker gate items are done and verified
-        (2026-11-26); only the GitHub items (CI run, app-team handover) remain.
-GATE: Not passed — 3 of 5 items passed; CI run and contract hand-over need your OK (see below).
+STATUS: Complete — all gate items are verified (2026-11-26). Accepted: the owner merged PR #2 on 2026-11-26.
+GATE: Passed. CI was green on PR #2 at 26eb1db (merged as 024ce58). The close-out (PR #3) re-ran the full gate locally (see Results); its CI run is reported on PR #3.
 ```
 
 ## Gate checklist (brief §4)
 
-| Gate item                                                                                            | State                     | Evidence / what is missing                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ---------------------------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docker compose up` starts Postgres, Redis, API, realtime, worker; `/health` and `/ready` return 200 | ☑ **Passed** (2026-11-26) | Docker 29.9.3 / Compose 5.7.1. `up -d --build`: both images built, `migrate` exited 0, api/realtime/postgres/redis `healthy`, worker up. `GET /health` → 200 and `GET /ready` → 200 `{database: ok, redis: ok}` on :3000 and :3001; unknown route → 404 standard shape. Two defects found and fixed on the way (see "Defects found by the Docker run"). Host port 5432 was taken by a local Postgres, so the run used `POSTGRES_HOST_PORT=55432` (supported override, `.env` unchanged). |
-| Server refuses to start with a missing required variable                                             | ☑ Passed                  | `startup.integration.spec.ts`: all three entry points exit non-zero with `DATABASE_URL: missing`; output contains neither the Redis password nor the bad URL value. Unit tests cover every required variable.                                                                                                                                                                                                                                                                            |
-| CI green on a pull request, incl. gitleaks and `npm audit`                                           | ☐ **Not run**             | Workflow written (`.github/workflows/server-ci.yml`), not yet pushed. Local equivalents: `npm audit --audit-level=high` exit 0; gitleaks 8.30.1 over history (4 commits): no leaks.                                                                                                                                                                                                                                                                                                      |
-| Contract drafts committed and shared with the app team                                               | ◐ Written, not shared     | `contracts/openapi.yaml` (35 operations) and `contracts/asyncapi.yaml` (14 events) validate and are unit-tested; commit and notification of the app team are pending your OK.                                                                                                                                                                                                                                                                                                            |
-| Phase report submitted                                                                               | ☑ This document           |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Gate item                                                                                            | State                             | Evidence / what is missing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker compose up` starts Postgres, Redis, API, realtime, worker; `/health` and `/ready` return 200 | ☑ **Passed** (2026-11-26)         | Docker 29.9.3 / Compose 5.7.1. `up -d --build`: both images built, `migrate` exited 0, api/realtime/postgres/redis `healthy`, worker up. `GET /health` → 200 and `GET /ready` → 200 `{database: ok, redis: ok}` on :3000 and :3001; unknown route → 404 standard shape. Two defects found and fixed on the way (see "Defects found by the Docker run"). Host port 5432 was taken by a local Postgres, so the run used `POSTGRES_HOST_PORT=55432` (supported override, `.env` unchanged). Re-run on the close-out commit: same result. |
+| Server refuses to start with a missing required variable                                             | ☑ Passed                          | `startup.integration.spec.ts`: all three entry points exit non-zero with `DATABASE_URL: missing`; output contains neither the Redis password nor the bad URL value. Unit tests cover every required variable.                                                                                                                                                                                                                                                                                                                         |
+| CI green on a pull request, incl. gitleaks and `npm audit`                                           | ☑ **Passed** (PR #2)              | PR #1 was merged with a red `server` job (the `/ready` startup race, fixed here). PR #2 `server-ci`: install, typecheck, lint, format, contracts, unit, integration, `npm audit --audit-level=high`, gitleaks (full history) and Docker image build all **success**.                                                                                                                                                                                                                                                                  |
+| Contract drafts committed and shared with the app team                                               | ☑ Committed; hand-over not needed | Solo project: one owner for app and server. The 10 mismatches are decided in `docs/DECISIONS.md` (committed with the close-out; recommendations awaiting your review).                                                                                                                                                                                                                                                                                                                                                                |
+| Phase report submitted                                                                               | ☑ This document                   |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+
+## TESTS
 
 Required tests (brief §3):
 
@@ -29,19 +30,20 @@ Required tests (brief §3):
 
 ## Results
 
-| Command                                                    | Result                                              |
-| ---------------------------------------------------------- | --------------------------------------------------- |
-| `npm run typecheck`                                        | pass                                                |
-| `npm run lint` (type-checked rules, `no-console: error`)   | pass                                                |
-| `npm run format:check`                                     | pass                                                |
-| `npm test` (unit)                                          | **112 / 112 pass** (6 files)                        |
-| `npm run test:integration` — `startup.integration.spec.ts` | **7 / 7 pass** (needs a build, not Docker)          |
-| `npm run test:integration` — `ready.integration.spec.ts`   | **5 / 5 pass** (Docker; 12 / 12 integration total)  |
-| `npm run contracts:types`                                  | deterministic (regenerating produces no diff)       |
-| `npm run build`                                            | pass (ESM output in `dist/`)                        |
-| `npm audit --audit-level=high`                             | exit 0 (8 moderate remain, dev-only — see Security) |
-| gitleaks 8.30.1 (checksum verified), full history          | no leaks                                            |
-| `docker build` / compose build (api image + migrate image) | pass                                                |
+| Command                                                    | Result                                                                                                                                             |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run typecheck`                                        | pass                                                                                                                                               |
+| `npm run lint` (type-checked rules, `no-console: error`)   | pass                                                                                                                                               |
+| `npm run format:check`                                     | pass                                                                                                                                               |
+| `npm test` (unit)                                          | **120 / 120 pass** (7 files)                                                                                                                       |
+| `npm run test:integration` — `startup.integration.spec.ts` | **7 / 7 pass** (needs a build, not Docker)                                                                                                         |
+| `npm run test:integration` — `ready.integration.spec.ts`   | **5 / 5 pass** (Docker; 12 / 12 integration total)                                                                                                 |
+| `npm run contracts:types`                                  | deterministic (regenerating produces no diff)                                                                                                      |
+| `npm run build`                                            | pass (ESM output in `dist/`)                                                                                                                       |
+| `npm audit --audit-level=high`                             | exit 0 (8 moderate remain, dev-only — see Security)                                                                                                |
+| gitleaks 8.30.1 (checksum verified), full history          | no leaks                                                                                                                                           |
+| `docker build` / compose build (api image + migrate image) | pass                                                                                                                                               |
+| `docker compose up` re-run on the close-out (2026-11-26)   | migrate exit 0; api, realtime, postgres, redis healthy; worker up; `/health` and `/ready` 200 on :3000 and :3001; unknown route 404 standard shape |
 
 ## Defects found by the Docker run (2026-11-26)
 
@@ -61,15 +63,16 @@ Both were invisible without Docker; both are fixed and covered by tests.
 - Dockerfile (multi-stage, non-root, `--ignore-scripts`, HEALTHCHECK), `infra/docker-compose.yml`, local coturn template.
 - OpenAPI 3.1 and AsyncAPI 3.1 drafts covering every endpoint/event of the briefs; generated `src/generated/openapi.ts`.
 - GitHub Actions workflow; README, CLAUDE.md, ARCHITECTURE/RUNBOOKS stubs; briefs copied to `docs/briefs/`.
+- Close-out: `test/security/contract-redaction.spec.ts` fails the build if a contract declares a secret-looking field (password, token, ticket, secret, credential, sdp, candidate, pin) that is not in `SENSITIVE_KEYS`, or a path/query parameter named like one. It found one gap, now fixed: `pin` (the `DevicePin` and `SessionRequestBody` fields) was not redacted. Also `src/common/guards/` (empty placeholder for the Phase 2 auth guard, so the brief layout is complete) and `docs/DECISIONS.md` committed.
 
 ## FILES CREATED / MODIFIED
 
 All under `Server/` except `.github/workflows/server-ci.yml`. Removed `Server/.gitkeep`. **No file in `RemoteAccessApp/` was touched.**
 
 - Config/tooling: `package.json`, `package-lock.json`, `tsconfig*.json`, `nest-cli.json`, `eslint.config.mjs`, `.prettierrc.json`, `.prettierignore`, `.gitignore`, `.gitattributes` (forces LF), `.dockerignore`, `.nvmrc`, `.env.example`, `vitest*.config.ts`, `prisma.config.ts`
-- Source: `src/{main-*.ts, bootstrap.ts, app|realtime|worker|core.module.ts}`, `src/common/{config,errors,validation,database,redis}/*`, `src/common/{logger,logger.module,nest-logger,request-id}.ts`, `src/modules/health/*`, `src/generated/openapi.ts`
+- Source: `src/{main-*.ts, bootstrap.ts, app|realtime|worker|core.module.ts}`, `src/common/{config,errors,validation,database,redis,guards}/*`, `src/common/{logger,logger.module,nest-logger,request-id}.ts`, `src/modules/health/*`, `src/generated/openapi.ts`
 - Data: `prisma/schema.prisma`, `prisma/migrations/{migration_lock.toml,20261125000000_init/migration.sql}`
-- Tests: `test/unit/{config,logger,request-id,http-pipeline,contracts}.spec.ts`, `test/integration/{startup,ready}.integration.spec.ts`, `test/integration/helpers/server-process.ts`
+- Tests: `test/unit/{config,logger,request-id,http-pipeline,contracts,env-example}.spec.ts`, `test/security/contract-redaction.spec.ts`, `test/integration/{startup,ready}.integration.spec.ts`, `test/integration/helpers/server-process.ts`
 - Infra/docs: `Dockerfile`, `scripts/healthcheck.mjs`, `infra/docker-compose.yml`, `infra/coturn/turnserver.conf.example`, `contracts/*.yaml`, `docs/*`, `README.md`, `CLAUDE.md`
 
 ## DEPENDENCIES ADDED
@@ -86,11 +89,11 @@ Deliberately **not** added although the plan mentioned them: `unplugin-swc` (Vit
 
 ## CONTRACT CHANGES
 
-New: `contracts/openapi.yaml` (35 operations; only `/health` and `/ready` are `x-status: implemented`) and `contracts/asyncapi.yaml` (14 events, all planned). **The app team has not been notified yet.**
+New: `contracts/openapi.yaml` (35 operations; only `/health` and `/ready` are `x-status: implemented`) and `contracts/asyncapi.yaml` (14 events, all planned). Solo project, no hand-over; mismatch decisions are in `docs/DECISIONS.md`.
 
 Derived from the 8 briefs and the app plan §11–12, because the "Server Architecture & Build Plan" document was not available. **Reconcile against it when provided.** Where the briefs leave a detail open I wrote `TODO(server)` instead of inventing one: block-request body, the fixed lists for end/report reasons, the export payload, the exact response bodies of the Phase 7 control endpoints.
 
-### Mismatches between the app plan and the server briefs (for the app team)
+### Mismatches between the app plan and the server briefs (decisions in `docs/DECISIONS.md`)
 
 1. App §11 lists `GET /api/devices/:deviceId`; no server brief defines it. **Not added** (rule 3).
 2. The app plan does not list server endpoints: `GET /api/me`, `PATCH /api/devices/:id`, settings, blocks, `POST /api/devices/:id/pin`, `POST /api/dev/push-test`, `GET /api/account/export`, the three control endpoints.
@@ -105,34 +108,44 @@ Derived from the 8 briefs and the app plan §11–12, because the "Server Archit
 
 ## MIGRATIONS
 
-`20261125000000_init` — creates the `app_meta` table only. Reversible by dropping the table (no data). Generated offline with `prisma migrate diff` (no Postgres was available), which yields the same SQL as `migrate dev`; it is applied to a real Postgres by `ready.integration.spec.ts` (**not yet run**) and by the compose `migrate` service (**not yet run**).
+`20261125000000_init` — creates the `app_meta` table only. Reversible by dropping the table (no data). Generated offline with `prisma migrate diff` (no Postgres was available), which yields the same SQL as `migrate dev`; it was applied to a real Postgres by `ready.integration.spec.ts` (5 / 5) and by the compose `migrate` service (exit 0).
 
 ## COMMANDS EXECUTED
 
-`npm install`, `npm run build`, `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm test`, `npx vitest run --config vitest.integration.config.ts startup`, `npm run contracts:types`, `npm audit`, `npx prisma generate | validate | migrate diff`, gitleaks `git` scan (binary downloaded to a scratch directory, SHA-256 verified against the release checksums), a throwaway smoke script booting `dist/main-api.js` (scratchpad, not committed).
+`npm install`, `npm run build`, `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm test`, `npx vitest run --config vitest.integration.config.ts startup`, `npm run contracts:types`, `npm audit`, `npx prisma generate | validate | migrate diff`, gitleaks `git` scan (binary downloaded to a scratch directory, SHA-256 verified against the release checksums), a throwaway smoke script booting `dist/main-api.js` (scratchpad, not committed). Later (2026-11-26): `npm run test:integration`, `docker compose --env-file .env -f infra/docker-compose.yml up -d --build | ps | down` (first Docker run and the close-out re-run), `curl` on `/health`, `/ready` and an unknown route. Close-out: `npm run format`, `npm run contracts:check`, `npm audit --audit-level=high`.
 
 ## SECURITY IMPACT
 
 - **New secrets (name only, where stored):** none committed. Local `.env` (gitignored, random hex passwords generated locally, never printed) holds `POSTGRES_PASSWORD`, `REDIS_PASSWORD` and the two URLs derived from them. Production secrets arrive in later phases via the secrets manager.
 - **New endpoints / events and their protection:** `GET /health` (no data) and `GET /ready` (returns only `ok` or a generic 503; the failing dependency is logged, not returned). Both unauthenticated by design; no other endpoint exists.
 - **New stored data:** table `app_meta` (empty).
-- **Logging reviewed for leaks: yes.** Verified by tests that redact every sensitive key at depth 0–3, that query strings and authorization headers never appear, and that a real process with secret-bearing URLs never logs those secrets (DB and Redis passwords, a `?ticket=` query value).
+- **Logging reviewed for leaks: yes.** Verified by tests that redact every sensitive key at depth 0–3, that query strings and authorization headers never appear, and that a real process with secret-bearing URLs never logs those secrets (DB and Redis passwords, a `?ticket=` query value). `pin` joined the redact list at close-out, and `test/security/contract-redaction.spec.ts` now keeps contracts and redact list in step.
 - **Rate limits added:** none (first limits arrive in Phase 2).
 - **Dependency audit:** `npm audit --audit-level=high` passes. A high-severity chain (`prisma` → `@prisma/config` → `effect@3.20.0`, ReDoS in `Schema.TemplateLiteral`, GHSA-7589-6fvf-x4pw) was fixed with a scoped override to `effect@3.22.5` (patched ≥ 3.22.1; Prisma validate/generate/diff re-verified). 8 **moderate** findings remain: the dev-only Testcontainers → `archiver` → `glob`/`minimatch` chain (DoS via glob amplification; not shipped, not reachable from the server). npm's suggested "fix" is a downgrade to Testcontainers 10, which I rejected.
 - **Supply chain:** dependency install scripts denied (`allowScripts`), Docker and CI use `--ignore-scripts`; GitHub Actions pinned by commit SHA; CI has `permissions: contents: read`; gitleaks comments and artifact upload disabled.
 - **Config hardening:** unset `BIND_HOST` binds loopback; wildcard CORS is rejected; production requires an https public URL.
 - **Template telemetry:** the Nest 12 scaffold offers an optional external observability service (`@nestjs/observe`); intentionally not installed.
 
+## DEVIATIONS FROM THE BRIEF
+
+Each is deliberate; none weakens a requirement.
+
+- **`Server/` instead of `mobiledesk-server/`.** The repository also holds the app, so the server lives in a subfolder (the npm package is still named `mobiledesk-server`).
+- **`.github/workflows/server-ci.yml` at the repository root instead of `ci.yml`.** GitHub only reads workflows at the root, and the app may get its own workflow. Triggers are limited to `Server/**` changes on pull requests and pushes to `main`.
+- **Testcontainers instead of CI service containers.** The required test "503 when Redis is stopped" has to stop Redis mid-test, which a service container cannot do. CI runs the same test as local.
+- **Additions beyond the brief:** `BIND_HOST` config (loopback by default), the `payload_too_large` error code (413 for the 64 KB limit), `requestId` in error bodies, format and contract-freshness CI steps, redaction of `authorization`, `cookie`, `set-cookie` and (close-out) `pin`.
+- **The dev stack runs as `NODE_ENV=development`.** The image sets `production`, which requires an https public URL; local compose is plain http.
+
 ## OPEN QUESTIONS / BLOCKERS
 
 1. ~~Docker Desktop~~ — installed; compose, integration tests and image builds are done (see above).
 2. **Architecture doc** not provided — contracts are derived; reconcile when it arrives.
-3. **Approval to push** the branch and open a PR (CI, gitleaks run, app-team notification).
+3. ~~Approval to push~~ — done: PR #2 merged as 024ce58 (2026-11-26).
 4. Local port 5432 is occupied by a native Postgres on the dev machine; use `POSTGRES_HOST_PORT=55432` for compose here. Windows-only quirk: Vitest fails when started from a shell whose cwd has a lowercase drive letter (two module instances of `vitest`). Documented in the README; Linux/CI unaffected.
-5. Prisma CLI install scripts are denied; Linux CI/Docker will confirm the schema-engine binary is bundled. If not, approve `@prisma/engines` narrowly.
-6. First gitleaks run in CI scans the app's history too; the local scan of the current history is clean.
+5. ~~Prisma CLI install scripts denied~~ — confirmed: Linux CI and the Docker build (`prisma generate`, `prisma migrate deploy`) work with scripts denied; no `@prisma/engines` approval is needed.
+6. ~~First gitleaks run in CI~~ — CI scanned the full history (app commits included): no leaks.
 7. Ordering exception: Phase 1 (TURN relay) was started before this gate passed (reason in the Phase 1 report). It shares no code with Phase 0.
 
 ## NEXT PHASE
 
-After this gate is accepted: **Phase 2 — Accounts and Authentication** (decide first: Play Integrity classic vs standard; need the Google Cloud project, Play Console app, package name and release-cert SHA-256, or run with `INTEGRITY_MODE=bypass` locally).
+Gate accepted (PR #2 merged). Next: **Phase 2 — Accounts and Authentication** (decide first: Play Integrity classic vs standard; need the Google Cloud project, Play Console app, package name and release-cert SHA-256, or run with `INTEGRITY_MODE=bypass` locally).

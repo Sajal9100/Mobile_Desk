@@ -1,0 +1,75 @@
+# Decisions and assumptions
+
+Status: **recommendations, awaiting owner review.** Solo project: one developer owns both the app and the server, so there is no hand-over; "the app" below means `RemoteAccessApp/`. Where the app plan and a server brief disagree, the recommendation says which one changes.
+
+## A. App ↔ server mismatches (from the Phase 0 report)
+
+| #   | Mismatch                                                                                                                                        | Recommendation                                                                                                                                                                                                                                                                                             | Changes                                        |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| 1   | App plan §11 lists `GET /api/devices/:deviceId`; no server brief has it.                                                                        | **Drop it.** `GET /api/devices` already returns `id, name, status, isCurrentDevice, lastSeenAt`, and connecting to a device goes through `POST /api/sessions/request` with the public ID, so no per-device read is needed.                                                                                 | App plan §11 (remove row)                      |
+| 2   | Server has endpoints the app plan does not list (`/api/me`, `PATCH /api/devices/:id`, settings, blocks, pin, `dev/push-test`, export, control). | **Server list wins.** The app adds each client function in the milestone that needs it; the OpenAPI file is the source of truth. No server change.                                                                                                                                                         | App plan §11 (point to `openapi.yaml`)         |
+| 3   | App §17.2: a failed integrity verdict is a risk signal. Server Phase 2: register/login require `ok`.                                            | **Hard-fail on the server** for register, login, device register and session request (`403 integrity_failed`, generic message; `503 integrity_unavailable` if Google is unreachable). A soft policy is more code and more states for no v1 benefit; revisit only if real users on custom ROMs get blocked. | App plan §17.2 item 5                          |
+| 4   | App says the JWT claim is `deviceId`; server uses `did`.                                                                                        | **Keep `did`.** The app must never read JWT contents (§17.3), so the name is server-internal.                                                                                                                                                                                                              | App plan §17.3 wording                         |
+| 5   | App says TURN username is `<expiry>:<userId>`; server uses `<expiry>:<sessionId>:<deviceId>`.                                                   | **Keep the server form.** coturn only needs the expiry as the first field; session and device in the username make every relay allocation traceable to one session. The app treats it as opaque.                                                                                                           | App plan §17.5 wording                         |
+| 6   | Server adds `ping`, `webrtc:connected`, and (v2) `session:control-*`; app §12 lists none of them.                                               | **AsyncAPI wins.** The app sends `ping` every 20 s and `webrtc:connected` once media flows. Check `ping` against the installed socket.io versions when Phase 3 starts; if it collides with a built-in, rename it `presence:ping` (contract-first, one line).                                               | App plan §12 (point to `asyncapi.yaml`)        |
+| 7   | App mock history uses `direction` (`incoming/outgoing`) and `status: completed`; server returns `role` and its 8 statuses.                      | **Server wins, and the app plan already agrees:** §10 defines `SessionRole = 'controller' \| 'target'` and §9 says "role". Only the mock is off. Display mapping in the UI: controller → "outgoing", target → "incoming", `ended` → "completed".                                                           | `src/mock/mockData.ts` (when real data lands)  |
+| 8   | App sends `sdpMid` / `sdpMLineIndex` as `null`; Phase 5 schema allows optional but not null, so the server would drop the candidate.            | **Accept `null` (`nullish`).** Evidence: `RemoteAccessApp/src/spike/session.ts:217` and `signaling.ts:28` already emit and validate `null`. Dropping those candidates would break ICE.                                                                                                                     | Phase 5 brief wording; AsyncAPI already has it |
+| 9   | Device public ID length: 9 or 10 digits.                                                                                                        | **9 digits.** The UI already shows `482 915 736` (3-3-3). Guessing is limited by rate limits and consent, not by ID length. Keep it one constant (`PUBLIC_ID_LENGTH`) so changing it is a one-line change before launch. Server stores and accepts digits only; the app strips spaces.                     | Phase 3 (constant)                             |
+| 10  | Socket `maxHttpBufferSize` 16 384 B (Phase 3) vs SDP up to 16 KB (Phase 5): a maximum offer plus envelope would disconnect the socket.          | **Set the socket buffer to 64 KB** and keep the zod limits (SDP ≤ 16 KB, candidate ≤ 1 KB) as the real policy. Oversized fields are then dropped and counted instead of killing the connection. Rate limits (50 events / 10 s) bound the cost.                                                             | Phase 3 value                                  |
+
+None of these block Phase 2. Items 3, 4 and 5 touch Phase 2 or later only by choosing what the server already does.
+
+## B. Assumptions (the "Server Architecture & Build Plan" document does not exist here)
+
+- The briefs in `docs/briefs/` plus the app plan §11–12 and §17 are the architecture. If the original document turns up, diff it against `contracts/` first.
+- `contracts/openapi.yaml` and `asyncapi.yaml` are the single source of truth; details the briefs leave open stay `TODO(server)` and get decided in the phase that implements them: block-request body, end/report reason lists, export payload, Phase 7 control responses.
+- Region `ap-south-1`; Postgres 16, Redis 7, Node LTS; Prisma 7.10.1 and TypeScript 6.0.x (pins explained in `CLAUDE.md`).
+- One Docker image, three processes (api, realtime, worker).
+- Production is not deployed before Phase 6. Local and CI are the only environments until then.
+- Windows dev machine: native Postgres occupies port 5432, so compose runs with `POSTGRES_HOST_PORT=55432`.
+
+## C. Play Integrity — Standard requests (Phase 2)
+
+**Decision:** Standard API. Local development uses `INTEGRITY_MODE=bypass`; the server refuses to start with `bypass` when `NODE_ENV=production` (and I recommend refusing it in staging too).
+
+**Server flow (Standard, still uses the nonce endpoint):**
+
+1. App calls `GET /api/integrity/nonce` (single-use, Redis, 5 min).
+2. App computes `requestHash = base64url(SHA-256("<action>|<nonce>|<fields the request carries>"))` and asks Play for a Standard token with it.
+3. App sends the token, nonce and fields to the endpoint.
+4. Server recomputes the hash, checks it equals `requestDetails.requestHash`, consumes the nonce (`GETDEL`), and checks package name, timestamp ≤ 2 min, `PLAY_RECOGNIZED`, certificate digest and `MEETS_DEVICE_INTEGRITY`.
+
+Standard tokens have no nonce field of their own, so the Redis nonce inside the hash is what stops replay. Phase 2 will implement this variant only.
+
+**What you need to set up (nothing here is needed while on `bypass`):**
+
+| Where               | What                                                                                                                                                                                                                                                                 |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Google Play Console | A developer account (one-time registration fee) and the app created in it. **The package name is permanent once uploaded.** The app currently uses the placeholder `com.remoteaccessapp`; pick the final `applicationId` before the first upload.                    |
+| Google Cloud        | One project; enable **Play Integrity API**; link it in Play Console → App integrity. Note the **project number** (public, goes into the app config).                                                                                                                 |
+| Google Cloud        | A **service account** in that project with a JSON key. The key goes to the server as a secret (`GOOGLE_SERVICE_ACCOUNT_JSON`), never into git. Scope used: `playintegrity`. Check at first use whether any IAM role is needed.                                       |
+| Play Console        | With Play App Signing, copy the **app signing key** SHA-256 (not the upload key) → server config `INTEGRITY_CERT_SHA256`.                                                                                                                                            |
+| Android app         | Add the Play Integrity client (`com.google.android.play:integrity`) through a React Native native module; call the Standard flow (prepare once, then request with `requestHash`). No Firebase or Google services are in the app yet; FCM arrives in Phase 3.         |
+| Testing             | A real phone with the build installed from Play (internal testing track is enough). Sideloaded debug builds and most emulators fail `PLAY_RECOGNIZED` / device integrity; use `bypass` for those. Play Console also has a test-response setting for tester accounts. |
+
+New server variables (names only): `INTEGRITY_MODE` (`enforce|bypass`), `INTEGRITY_PACKAGE_NAME`, `INTEGRITY_CERT_SHA256`, `GOOGLE_SERVICE_ACCOUNT_JSON`. Play Integrity has a default daily request quota; check it before launch.
+
+## D. Phase 1 — what AWS needs (you provision; nothing is created from here)
+
+AWS CLI is not installed on this machine, and nothing is provisioned. The runbook is `infra/coturn/SPIKE_RELAY.md` on branch `server/phase-1-test-relay`.
+
+**Resources (all in `ap-south-1`, all tagged `mobiledesk-spike-turn` + `delete-by`):**
+
+| Resource       | Setting                                                                                                         | Approx. cost (verify in the AWS calculator)       |
+| -------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| EC2 instance   | Ubuntu Server LTS, `t3.small` (`t3.micro` is enough for two phones), 8–10 GB gp3                                | well under 1 USD/day                              |
+| Elastic IP     | 1, associated with the instance (coturn's `external-ip` must not change)                                        | public IPv4 is billed hourly, also while attached |
+| Security group | `mobiledesk-spike-turn-sg`: UDP 3478, TCP 3478, UDP 49160–49200 from anywhere; TCP 22 from **your IP /32** only | free                                              |
+| Key pair       | New, only for this VM (or use SSM Session Manager and skip port 22)                                             | free                                              |
+| Data transfer  | Relayed video leaves AWS: small for a spike, grows with test time                                               | per GB out                                        |
+
+**Permissions:** do this as an IAM user or role with MFA, not the root user. EC2 permissions are enough: run/terminate/describe instances, create/delete security groups and ingress rules, allocate/associate/release addresses, create/delete key pairs, create tags, describe images and VPCs. (For SSM instead of SSH, also an instance profile with `AmazonSSMManagedInstanceCore`.)
+
+**Before you start:** create an AWS Budget alert (e.g. 5 USD) and a calendar reminder for the `delete-by` date.
+
+**What I can do afterwards, without any AWS access:** once you give me the Elastic IP (not a secret), I can run the private-range refusal checks from WSL and write the evidence into the Phase 1 report. The username and password stay on the VM and in your password manager, never in chat or git. **Destroy list:** instance, Elastic IP, security group, key pair, password-manager item, then confirm nothing tagged `mobiledesk-spike-turn` remains.
