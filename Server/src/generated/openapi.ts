@@ -75,7 +75,7 @@ export interface paths {
          *
          *     Errors: `400 validation_failed`, `403 integrity_failed` (the verdict was not acceptable),
          *     `409 email_taken`, `429 rate_limited`, `503 integrity_unavailable` (Google could not be
-         *     reached; retry). An account that was deleted keeps its email until the final deletion, so
+         *     reached; retry with a NEW nonce and a new token: the nonce is used up by every attempt). An account that was deleted keeps its email until the final deletion, so
          *     registering it again returns `409 email_taken` until then.
          */
         post: operations["register"];
@@ -101,7 +101,7 @@ export interface paths {
          *
          *     Other errors: `400 validation_failed`, `403 integrity_failed`, `403 forbidden` (the
          *     password was right but the account is suspended), `429 rate_limited`,
-         *     `503 integrity_unavailable` (retry).
+         *     `503 integrity_unavailable` (retry with a NEW nonce and a new token).
          */
         post: operations["login"];
         delete?: never;
