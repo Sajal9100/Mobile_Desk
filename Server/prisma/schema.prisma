@@ -22,3 +22,67 @@ model AppMeta {
 
   @@map("app_meta")
 }
+
+// ---------------------------------------------------------------------------------------------
+// Phase 2: accounts and authentication
+// ---------------------------------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  // Stored trimmed and lower-cased (also enforced by a CHECK constraint in the migration).
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  displayName  String     @map("display_name")
+  status       UserStatus @default(active)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  // Soft delete. The row (and its email) stays until the hard-delete job of Phase 6.
+  deletedAt    DateTime?  @map("deleted_at") @db.Timestamptz
+
+  settings      UserSettings?
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+enum UserStatus {
+  active
+  suspended
+
+  @@map("user_status")
+}
+
+// One row per refresh token. A login starts a family; every refresh adds a successor to the same
+// family and marks its predecessor used. Only the SHA-256 of the raw token is stored.
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  // Set once the device is registered (Phase 3).
+  deviceId  String?   @map("device_id") @db.Uuid
+  familyId  String    @map("family_id") @db.Uuid
+  // SHA-256 hex of the raw token.
+  tokenHash String    @unique @map("token_hash")
+  // Absolute expiry of the whole family: login time + 30 days. A rotated token keeps it.
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  usedAt    DateTime? @map("used_at") @db.Timestamptz
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// Privacy settings. The row is created with the user; the endpoints arrive in Phase 4.
+model UserSettings {
+  userId           String  @id @map("user_id") @db.Uuid
+  onlyMyDevices    Boolean @default(false) @map("only_my_devices")
+  requirePin       Boolean @default(false) @map("require_pin")
+  relayOnlyDefault Boolean @default(true) @map("relay_only_default")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}

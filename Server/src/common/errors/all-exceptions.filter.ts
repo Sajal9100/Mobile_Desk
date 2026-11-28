@@ -61,6 +61,30 @@ function hasStatusCode(error: unknown): error is { statusCode: number } {
   );
 }
 
+/** Prisma codes that mean "the database cannot be reached or is overloaded" (not a bug in a query). */
+const DATABASE_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
+  'P1001', // cannot reach the server
+  'P1002', // timed out reaching the server
+  'P1008', // operation timed out
+  'P1017', // server closed the connection
+  'P2024', // timed out getting a connection from the pool
+]);
+
+/**
+ * Fail closed (rule 9): when Postgres is down the caller gets a retryable 503, not a bare 500 that
+ * looks like a bug. Matched by name so this file does not depend on the generated client.
+ */
+function isDatabaseUnavailable(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const { name, code } = error as { name?: unknown; code?: unknown };
+  if (name === 'PrismaClientInitializationError') return true;
+  return (
+    name === 'PrismaClientKnownRequestError' &&
+    typeof code === 'string' &&
+    DATABASE_UNAVAILABLE_CODES.has(code)
+  );
+}
+
 export function toApiError(exception: unknown): ApiError {
   if (exception instanceof AppException) {
     return {
@@ -77,6 +101,9 @@ export function toApiError(exception: unknown): ApiError {
   }
   if (hasStatusCode(exception)) {
     return fromStatus(exception.statusCode);
+  }
+  if (isDatabaseUnavailable(exception)) {
+    return fromStatus(503);
   }
   return INTERNAL_ERROR;
 }

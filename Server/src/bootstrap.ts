@@ -112,7 +112,7 @@ export async function runWorkerProcess(options: {
     });
     app.useLogger(new PinoNestLogger(logger));
     app.enableShutdownHooks();
-    logger.info('worker started (no queues yet)');
+    logger.info('worker started');
   } catch (error) {
     failStartup(logger, error);
   }
